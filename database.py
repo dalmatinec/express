@@ -68,9 +68,16 @@ class Database:
             """)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS admins (
-                    admin_id INTEGER PRIMARY KEY
+                    admin_id INTEGER PRIMARY KEY,
+                    name TEXT,
+                    username TEXT
                 )
             """)
+            # Миграция со старой версии, где у админов не было имён
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(admins)")}
+            for column in ("name", "username"):
+                if column not in columns:
+                    conn.execute(f"ALTER TABLE admins ADD COLUMN {column} TEXT")
             # Настройки (group_id и т.п.)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS settings (
@@ -131,8 +138,15 @@ class Database:
 
     # ==================== АДМИНИСТРАТОРЫ ====================
 
-    def add_admin(self, admin_id: int) -> bool:
-        return self.execute("INSERT OR IGNORE INTO admins (admin_id) VALUES (?)", (admin_id,)).rowcount > 0
+    def add_admin(self, admin_id: int, name: str, username: str) -> bool:
+        """Добавить админа (или обновить имя). True — если админ новый."""
+        is_new = not self.is_admin(admin_id)
+        self.execute(
+            """INSERT INTO admins (admin_id, name, username) VALUES (?, ?, ?)
+               ON CONFLICT(admin_id) DO UPDATE SET name = excluded.name, username = excluded.username""",
+            (admin_id, name, username)
+        )
+        return is_new
 
     def remove_admin(self, admin_id: int) -> bool:
         return self.execute("DELETE FROM admins WHERE admin_id = ?", (admin_id,)).rowcount > 0
@@ -140,8 +154,12 @@ class Database:
     def is_admin(self, user_id: int) -> bool:
         return self.fetchone("SELECT 1 FROM admins WHERE admin_id = ?", (user_id,)) is not None
 
-    def get_admins(self) -> List[int]:
-        return [row["admin_id"] for row in self.fetchall("SELECT admin_id FROM admins")]
+    def get_admins(self) -> List[dict]:
+        return [dict(row) for row in self.fetchall("SELECT * FROM admins ORDER BY name")]
+
+    def get_admin(self, admin_id: int) -> Optional[dict]:
+        row = self.fetchone("SELECT * FROM admins WHERE admin_id = ?", (admin_id,))
+        return dict(row) if row else None
 
     # ==================== НАСТРОЙКИ ====================
 
@@ -163,16 +181,6 @@ class Database:
     def get_text(self, key: str) -> Optional[str]:
         row = self.fetchone("SELECT value FROM texts WHERE key = ?", (key,))
         return row["value"] if row else None
-
-    # ==================== СТАТИСТИКА ====================
-
-    def get_stats(self) -> dict:
-        return {
-            "users": self.fetchone("SELECT COUNT(*) AS c FROM users")["c"],
-            "banned": self.fetchone("SELECT COUNT(*) AS c FROM users WHERE is_banned = 1")["c"],
-            "messages": self.fetchone("SELECT COUNT(*) AS c FROM links")["c"],
-            "admins": self.fetchone("SELECT COUNT(*) AS c FROM admins")["c"],
-        }
 
 
 # Глобальный экземпляр БД

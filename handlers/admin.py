@@ -4,18 +4,24 @@
 
 import html
 
-from aiogram import Router, F
-from aiogram.filters import Command, CommandObject
+from typing import Optional
+
+from aiogram import Bot, Router, F
+from aiogram.filters import Command, CommandObject, or_f
 from aiogram.types import Message
 
+from config import SUPER_ADMIN_ID
 from database import db
-from filters import IsAdmin, IsSuperAdmin, get_group_id
+from filters import IsAdmin, IsSuperAdmin, IsWorkGroup, get_group_id
+from handlers.group import linked_user
 from texts import DEFAULTS, DISABLED, get_raw, render
 
 router = Router()
 router.message.filter(IsAdmin())
 
 private = F.chat.type == "private"
+# Бан и управление админами работают и в личке, и в рабочей группе
+private_or_group = or_f(private, IsWorkGroup())
 
 HELP = """<b>🛠 Команды администратора</b>
 
@@ -30,14 +36,14 @@ HELP = """<b>🛠 Команды администратора</b>
 /settext <code>ключ</code> - — отключить сообщение (для welcome, sent, banned)
 /resettext <code>ключ</code> — вернуть текст по умолчанию
 
-<b>Пользователи</b>
-/ban <code>ID</code>, /unban <code>ID</code> — блокировка
-В группе: ответьте на сообщение пользователя /ban, /unban или /who
+<b>Блокировка</b> (в личке или в группе)
+/ban, /unban — реплаем на пересланное сообщение пользователя
+/ban <code>ID</code>, /unban <code>ID</code> — по ID
 
-<b>Администраторы</b> (только супер-админ)
-/addadmin <code>ID</code>, /deladmin <code>ID</code>, /admins
-
-/stats — статистика
+<b>Администраторы</b> (только супер-админ, в личке или в группе)
+/addadmin, /deladmin — реплаем на сообщение человека в группе
+/addadmin <code>ID</code>, /deladmin <code>ID</code> — по ID
+/admins — список админов с именами
 
 <b>Как отвечать:</b> в группе нажмите «Ответить» (reply) на пересланное сообщение пользователя. Отвечать можно сколько угодно раз."""
 
@@ -147,64 +153,123 @@ async def reset_text(message: Message, command: CommandObject):
     await message.answer(f"✅ Текст <b>{key}</b> сброшен по умолчанию.")
 
 
-# ==================== ПОЛЬЗОВАТЕЛИ ====================
+# ==================== ИМЕНА ====================
 
-@router.message(Command("ban"), private)
+def format_person(user_id: int, name: str = "", username: str = "") -> str:
+    """«Имя (@username) — ID», чтобы было понятно, чей это ID."""
+    parts = [html.escape(name) if name else "Без имени"]
+    if username:
+        parts.append(f"(@{username})")
+    return f"{' '.join(parts)} — <code>{user_id}</code>"
+
+
+async def person_info(bot: Bot, user_id: int) -> tuple[str, str]:
+    """Имя и username по ID: из Telegram, иначе из базы."""
+    try:
+        chat = await bot.get_chat(user_id)
+        name = " ".join(filter(None, [chat.first_name, chat.last_name])) or (chat.title or "")
+        return name, chat.username or ""
+    except Exception:
+        pass
+    known = db.get_user(user_id) or db.get_admin(user_id) or {}
+    name = known.get("name") or " ".join(filter(None, [known.get("first_name"), known.get("last_name")]))
+    return name or "", known.get("username") or ""
+
+
+async def resolve_target(message: Message, command: CommandObject,
+                         allow_staff: bool = False) -> Optional[tuple[int, str, str]]:
+    """
+    Кого касается команда: (ID, имя, username).
+    - реплай на пересланное сообщение пользователя -> этот пользователь;
+    - реплай на сообщение человека в группе (allow_staff) -> этот человек;
+    - иначе ID из аргумента.
+    """
+    user_id = linked_user(message)
+    if user_id is not None:
+        return (user_id, *await person_info(message.bot, user_id))
+
+    reply = message.reply_to_message
+    if allow_staff and reply and reply.from_user and not reply.from_user.is_bot:
+        u = reply.from_user
+        return u.id, u.full_name, u.username or ""
+
+    user_id = parse_id(command)
+    if user_id is None:
+        return None
+    return (user_id, *await person_info(message.bot, user_id))
+
+
+# ==================== БЛОКИРОВКА ====================
+
+@router.message(Command("ban"), private_or_group)
 async def ban(message: Message, command: CommandObject):
-    user_id = parse_id(command)
-    if user_id is None:
-        await message.answer("Формат: /ban <code>ID</code>")
+    target = await resolve_target(message, command)
+    if target is None:
+        await message.reply("Ответьте на сообщение пользователя командой /ban или укажите ID: /ban <code>123456</code>")
         return
-    db.set_banned(user_id, True)
-    await message.answer(f"🚫 Пользователь <code>{user_id}</code> заблокирован.")
+    db.set_banned(target[0], True)
+    await message.reply(f"🚫 Заблокирован: {format_person(*target)}")
 
 
-@router.message(Command("unban"), private)
+@router.message(Command("unban"), private_or_group)
 async def unban(message: Message, command: CommandObject):
-    user_id = parse_id(command)
-    if user_id is None:
-        await message.answer("Формат: /unban <code>ID</code>")
+    target = await resolve_target(message, command)
+    if target is None:
+        await message.reply("Ответьте на сообщение пользователя командой /unban или укажите ID: /unban <code>123456</code>")
         return
-    db.set_banned(user_id, False)
-    await message.answer(f"✅ Пользователь <code>{user_id}</code> разблокирован.")
-
-
-@router.message(Command("stats"), private)
-async def stats(message: Message):
-    s = db.get_stats()
-    await message.answer(
-        f"📊 <b>Статистика</b>\n\n"
-        f"👥 Пользователей: {s['users']}\n"
-        f"📨 Переслано сообщений: {s['messages']}\n"
-        f"🚫 Заблокировано: {s['banned']}\n"
-        f"👮 Администраторов: {s['admins']}"
-    )
+    db.set_banned(target[0], False)
+    await message.reply(f"✅ Разблокирован: {format_person(*target)}")
 
 
 # ==================== АДМИНИСТРАТОРЫ ====================
 
-@router.message(Command("addadmin"), private, IsSuperAdmin())
+@router.message(Command("addadmin"), private_or_group, IsSuperAdmin())
 async def add_admin(message: Message, command: CommandObject):
-    admin_id = parse_id(command)
-    if admin_id is None:
-        await message.answer("Формат: /addadmin <code>ID</code>")
+    target = await resolve_target(message, command, allow_staff=True)
+    if target is None:
+        await message.reply(
+            "Ответьте на сообщение человека в группе командой /addadmin или укажите ID: /addadmin <code>123456</code>"
+        )
         return
-    added = db.add_admin(admin_id)
-    await message.answer("✅ Администратор добавлен." if added else "ℹ️ Уже администратор.")
+    if target[0] == SUPER_ADMIN_ID:
+        await message.reply("ℹ️ Это супер-админ.")
+        return
+    added = db.add_admin(*target)
+    status = "✅ Добавлен админ" if added else "ℹ️ Уже админ (имя обновлено)"
+    await message.reply(f"{status}: {format_person(*target)}")
 
 
-@router.message(Command("deladmin"), private, IsSuperAdmin())
+@router.message(Command("deladmin"), private_or_group, IsSuperAdmin())
 async def del_admin(message: Message, command: CommandObject):
-    admin_id = parse_id(command)
-    if admin_id is None:
-        await message.answer("Формат: /deladmin <code>ID</code>")
+    target = await resolve_target(message, command, allow_staff=True)
+    if target is None:
+        await message.reply(
+            "Ответьте на сообщение админа в группе командой /deladmin или укажите ID: /deladmin <code>123456</code>"
+        )
         return
-    removed = db.remove_admin(admin_id)
-    await message.answer("✅ Администратор удалён." if removed else "ℹ️ Такого администратора нет.")
+    stored = db.get_admin(target[0])
+    if not db.remove_admin(target[0]):
+        await message.reply(f"ℹ️ Не админ: {format_person(*target)}")
+        return
+    name = target[1] or (stored or {}).get("name") or ""
+    username = target[2] or (stored or {}).get("username") or ""
+    await message.reply(f"✅ Удалён админ: {format_person(target[0], name, username)}")
 
 
-@router.message(Command("admins"), private, IsSuperAdmin())
+@router.message(Command("admins"), private_or_group, IsSuperAdmin())
 async def list_admins(message: Message):
-    admins = db.get_admins()
-    lines = "\n".join(f"• <code>{a}</code>" for a in admins) or "—"
-    await message.answer(f"👮 <b>Администраторы</b>\n\n{lines}")
+    lines = [f"👑 {format_person(SUPER_ADMIN_ID, *await person_info(message.bot, SUPER_ADMIN_ID))}"]
+    for admin in db.get_admins():
+        name, username = await person_info(message.bot, admin["admin_id"])
+        name, username = name or admin["name"] or "", username or admin["username"] or ""
+        # Имя могло поменяться — обновляем в базе
+        if (name, username) != (admin["name"] or "", admin["username"] or ""):
+            db.add_admin(admin["admin_id"], name, username)
+        lines.append(f"👮 {format_person(admin['admin_id'], name, username)}")
+    await message.reply("<b>Администраторы</b>\n\n" + "\n".join(lines))
+
+
+@router.message(Command("addadmin", "deladmin", "admins"), private_or_group)
+async def super_admin_only(message: Message):
+    """Обычный админ вызвал команду супер-админа."""
+    await message.reply("⛔ Управлять админами может только супер-админ.")

@@ -1,14 +1,13 @@
 """
 Рабочая группа: ответ реплаем на пересланное сообщение уходит пользователю.
 Ограничений по количеству/частоте ответов нет — антифлуд сюда не подключается.
+Команды /ban, /unban и управление админами — в handlers/admin.py (только для админов бота).
 """
 
-import html
 import logging
 from typing import Optional
 
 from aiogram import Router
-from aiogram.filters import Command, CommandObject
 from aiogram.types import Message, ReactionTypeEmoji
 
 from database import db
@@ -40,56 +39,6 @@ def linked_user(message: Message) -> Optional[int]:
     if original is None or original.from_user is None or original.from_user.id != message.bot.id:
         return None
     return db.get_linked_user(message.chat.id, original.message_id)
-
-
-def target_user(message: Message, command: CommandObject) -> Optional[int]:
-    """Цель команды: пользователь из реплая или ID из аргумента."""
-    user_id = linked_user(message)
-    if user_id is None and command.args:
-        try:
-            user_id = int(command.args.split()[0])
-        except ValueError:
-            return None
-    return user_id
-
-
-# ==================== КОМАНДЫ В ГРУППЕ ====================
-
-@router.message(Command("ban"))
-async def ban_command(message: Message, command: CommandObject):
-    user_id = target_user(message, command)
-    if user_id is None:
-        await message.reply("Ответьте на сообщение пользователя командой /ban или укажите ID: /ban 123456")
-        return
-    db.set_banned(user_id, True)
-    await message.reply(f"🚫 Пользователь <code>{user_id}</code> заблокирован.")
-
-
-@router.message(Command("unban"))
-async def unban_command(message: Message, command: CommandObject):
-    user_id = target_user(message, command)
-    if user_id is None:
-        await message.reply("Ответьте на сообщение пользователя командой /unban или укажите ID: /unban 123456")
-        return
-    db.set_banned(user_id, False)
-    await message.reply(f"✅ Пользователь <code>{user_id}</code> разблокирован.")
-
-
-@router.message(Command("who"))
-async def who_command(message: Message, command: CommandObject):
-    """Кто написал сообщение (полезно, если у пользователя скрыта пересылка)."""
-    user_id = target_user(message, command)
-    if user_id is None:
-        await message.reply("Ответьте на сообщение пользователя командой /who")
-        return
-    user = db.get_user(user_id) or {}
-    name = html.escape(" ".join(filter(None, [user.get("first_name"), user.get("last_name")])) or "—")
-    username = f"@{user['username']}" if user.get("username") else "—"
-    status = "🔴 заблокирован" if user.get("is_banned") else "🟢 активен"
-    await message.reply(
-        f"👤 {name}\n🔗 {username}\n🆔 <code>{user_id}</code>\n"
-        f'<a href="tg://user?id={user_id}">Открыть профиль</a>\nСтатус: {status}'
-    )
 
 
 # ==================== ОТВЕТЫ ПОЛЬЗОВАТЕЛЯМ ====================
