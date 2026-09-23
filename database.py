@@ -73,11 +73,10 @@ class Database:
                     username TEXT
                 )
             """)
-            # Миграция со старой версии, где у админов не было имён
-            columns = {row["name"] for row in conn.execute("PRAGMA table_info(admins)")}
-            for column in ("name", "username"):
-                if column not in columns:
-                    conn.execute(f"ALTER TABLE admins ADD COLUMN {column} TEXT")
+            # Миграция со старых версий бота: добавляем недостающие колонки
+            self._add_columns(conn, "admins", {"name": "TEXT", "username": "TEXT"})
+            self._add_columns(conn, "users", {"is_banned": "INTEGER DEFAULT 0"})
+            self._add_columns(conn, "settings", {"value": "TEXT"})
             # Настройки (group_id и т.п.)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS settings (
@@ -92,7 +91,18 @@ class Database:
                     value TEXT NOT NULL
                 )
             """)
+            # Баны из старой таблицы blocks переносим в users
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='blocks'").fetchone():
+                conn.execute("""INSERT INTO users (user_id, is_banned) SELECT user_id, 1 FROM blocks WHERE true
+                                ON CONFLICT(user_id) DO UPDATE SET is_banned = 1""")
         conn.close()
+
+    @staticmethod
+    def _add_columns(conn: sqlite3.Connection, table: str, columns: dict):
+        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        for column, column_type in columns.items():
+            if column not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
     # ==================== ПОЛЬЗОВАТЕЛИ ====================
 
