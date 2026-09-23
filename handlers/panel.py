@@ -1,5 +1,5 @@
 """
-Админ-панель на кнопках (в личке с ботом): /start или /admin.
+Админ-панель на кнопках (в личке с ботом): /admin.
 Разделы: администраторы, блокировки, тексты, рабочая группа, справка.
 """
 
@@ -8,7 +8,7 @@ from typing import Optional
 
 from aiogram import Router, F
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.filters import Command, CommandStart, or_f
+from aiogram.filters import Command
 from aiogram.filters.callback_data import CallbackData
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -85,7 +85,7 @@ async def main_screen(target: Message | CallbackQuery):
         f"👤 Пользователей: {stats['users']} (активны за сутки: {stats['active_1']})\n"
         f"🚫 Заблокировано: {stats['banned']}\n"
         f"👮 Админов: {stats['admins']}\n\n"
-        "Ваши сообщения боту в группу не пересылаются."
+        "Ваш /start в группу не уходит, а обычные сообщения боту уходят в группу, как от клиента."
     )
     kb = InlineKeyboardBuilder()
     btn(kb, "👮 Администраторы", "admins")
@@ -99,7 +99,7 @@ async def main_screen(target: Message | CallbackQuery):
     await show(target, text, kb.as_markup())
 
 
-@router.message(or_f(CommandStart(), Command("admin")))
+@router.message(Command("admin"))
 async def open_panel(message: Message, state: FSMContext):
     await state.clear()
     await main_screen(message)
@@ -134,7 +134,8 @@ HOW_IT_WORKS = """<b>❓ Как работает бот</b>
 • Админы бота могут там же ответить на сообщение клиента /ban или /unban.
 
 <b>Админы</b>
-• /start или /admin открывает эту панель. Сообщения админов в группу не пересылаются.
+• /admin открывает эту панель (у остальных команда ничего не делает).
+• /start админа в группу не уходит — админ видит приветствие. Обычные сообщения админа уходят в группу, как от клиента (так можно создать тестовую заявку).
 • 👮 Администраторы — список с именами; супер-админ добавляет и удаляет.
 • 🚫 Блокировки — список заблокированных, разблокировка, блокировка по ID.
 • 📝 Тексты — все сообщения бота можно изменить или отключить.

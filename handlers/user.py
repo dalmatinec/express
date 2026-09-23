@@ -7,11 +7,11 @@ import html
 import logging
 
 from aiogram import Router, F
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
 
 from database import db
-from filters import get_group_id
+from filters import get_group_id, is_admin
 from limits import get_limit
 from handlers.common import mark_delivered, with_retry
 from texts import render
@@ -54,20 +54,29 @@ def remember_user(message: Message):
 
 @router.message(CommandStart())
 async def start_command(message: Message):
-    """/start тоже пересылается в группу, затем пользователю приходит приветствие."""
+    """
+    /start клиента пересылается в группу, затем приходит приветствие.
+    /start админа в группу не уходит — только приветствие.
+    """
     remember_user(message)
 
     if db.is_banned(message.from_user.id):
         await answer(message, "banned")
         return
 
-    await forward_to_group(message)
+    if not is_admin(message.from_user.id):
+        await forward_to_group(message)
 
     await answer(
         message, "welcome",
         first_name=html.escape(message.from_user.first_name or ""),
         last_name=html.escape(message.from_user.last_name or ""),
     )
+
+
+@router.message(Command("admin"))
+async def not_admin_panel(message: Message):
+    """/admin от не-админа: ничего не отвечаем и в группу не пересылаем."""
 
 
 @router.message(F.text)
