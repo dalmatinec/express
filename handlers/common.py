@@ -9,8 +9,9 @@ from typing import Awaitable, Callable, TypeVar
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramRetryAfter
+from aiogram.types import Message, ReactionTypeEmoji
 
-from config import SUPER_ADMIN_IDS
+from config import SUPER_ADMIN_IDS, DELIVERED_REACTION
 from database import db
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,17 @@ async def with_retry(call: Callable[[], Awaitable[T]], attempts: int = 3) -> T:
                 raise
             logger.warning("Лимит Telegram, ждём %s сек.", e.retry_after)
             await asyncio.sleep(e.retry_after)
+
+
+async def mark_delivered(message: Message):
+    """Поставить реакцию «доставлено» на сообщение."""
+    if not DELIVERED_REACTION:
+        return
+    try:
+        await message.react([ReactionTypeEmoji(emoji=DELIVERED_REACTION)])
+    except Exception as e:
+        # Реакции могут быть отключены в чате — не критично
+        logger.debug("Не удалось поставить реакцию: %s", e)
 
 
 # ==================== ОБЩЕЕ ДЛЯ АДМИНКИ ====================

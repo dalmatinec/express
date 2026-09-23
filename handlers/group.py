@@ -8,11 +8,11 @@ import logging
 from typing import Optional
 
 from aiogram import Router
-from aiogram.types import Message, ReactionTypeEmoji
+from aiogram.types import Message
 
 from database import db
 from filters import IsWorkGroup
-from handlers.common import with_retry
+from handlers.common import mark_delivered, with_retry
 from texts import render
 
 logger = logging.getLogger(__name__)
@@ -75,10 +75,7 @@ async def group_reply(message: Message):
         return
 
     db.increment("replies")
-    try:
-        await message.react([ReactionTypeEmoji(emoji="👍")])
-    except Exception:
-        pass  # реакции могут быть отключены в группе — не критично
+    await mark_delivered(message)
 
 
 async def send_header_and_copy(message: Message, user_id: int, author: str):

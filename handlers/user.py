@@ -13,7 +13,7 @@ from aiogram.types import Message
 from config import MAX_TEXT_LENGTH
 from database import db
 from filters import get_group_id
-from handlers.common import with_retry
+from handlers.common import mark_delivered, with_retry
 from texts import render
 
 logger = logging.getLogger(__name__)
@@ -43,6 +43,7 @@ async def forward_to_group(message: Message) -> bool:
         return False
 
     db.save_link(group_id, forwarded.message_id, message.from_user.id)
+    await mark_delivered(message)  # клиент видит, что сообщение дошло
     return True
 
 
