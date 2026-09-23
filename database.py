@@ -73,10 +73,6 @@ class Database:
                     username TEXT
                 )
             """)
-            # Миграция со старых версий бота: добавляем недостающие колонки
-            self._add_columns(conn, "admins", {"name": "TEXT", "username": "TEXT"})
-            self._add_columns(conn, "users", {"is_banned": "INTEGER DEFAULT 0"})
-            self._add_columns(conn, "settings", {"value": "TEXT"})
             # Настройки (group_id и т.п.)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS settings (
@@ -91,6 +87,10 @@ class Database:
                     value TEXT NOT NULL
                 )
             """)
+            # Миграция со старых версий бота: добавляем недостающие колонки
+            self._add_columns(conn, "admins", {"name": "TEXT", "username": "TEXT"})
+            self._add_columns(conn, "users", {"is_banned": "INTEGER DEFAULT 0"})
+            self._add_columns(conn, "settings", {"value": "TEXT"})
             # Баны из старой таблицы blocks переносим в users
             if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='blocks'").fetchone():
                 conn.execute("""INSERT INTO users (user_id, is_banned) SELECT user_id, 1 FROM blocks WHERE true
