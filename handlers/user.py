@@ -10,9 +10,9 @@ from aiogram import Router, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message
 
-from config import MAX_TEXT_LENGTH
 from database import db
 from filters import get_group_id
+from limits import get_limit
 from handlers.common import mark_delivered, with_retry
 from texts import render
 
@@ -78,8 +78,9 @@ async def user_text(message: Message):
         await answer(message, "banned")
         return
 
-    if len(message.text) > MAX_TEXT_LENGTH:
-        await answer(message, "too_long", max=MAX_TEXT_LENGTH)
+    max_length = get_limit("max_length")
+    if len(message.text) > max_length:
+        await answer(message, "too_long", max=max_length)
         return
 
     if await forward_to_group(message):

@@ -12,11 +12,8 @@ from typing import Callable, Any, Awaitable, Optional
 from aiogram import BaseMiddleware
 from aiogram.types import Message, TelegramObject
 
-from config import (
-    FLOOD_MIN_INTERVAL, FLOOD_WINDOW, FLOOD_MAX_MESSAGES,
-    FLOOD_MUTE_SECONDS, DUPLICATE_WINDOW,
-)
 from filters import is_admin
+from limits import format_seconds, get_limit
 from texts import render
 
 WARN_COOLDOWN = 10  # не чаще одного предупреждения за столько секунд
@@ -61,30 +58,32 @@ class AntiFloodMiddleware(BaseMiddleware):
         self._cleanup(now)
         state = self.users.setdefault(user_id, UserState())
 
-        # Мут — молча игнорируем
+        # Мут — сообщение не принимаем, но говорим клиенту, сколько ждать
         if now < state.muted_until:
+            await self._warn(event, state, now, "muted", time=format_seconds(state.muted_until - now))
             return None
 
         # Считаем все попытки, в том числе отброшенные: спам ведёт к муту
+        window = get_limit("flood_window")
         state.history.append(now)
-        while state.history and now - state.history[0] > FLOOD_WINDOW:
+        while state.history and now - state.history[0] > window:
             state.history.popleft()
 
-        too_fast = now - state.last_time < FLOOD_MIN_INTERVAL
+        too_fast = now - state.last_time < get_limit("flood_interval")
         state.last_time = now
 
-        if len(state.history) > FLOOD_MAX_MESSAGES:
-            state.muted_until = now + FLOOD_MUTE_SECONDS
+        if len(state.history) > get_limit("flood_max"):
+            mute = get_limit("flood_mute")
+            state.muted_until = now + mute
             state.history.clear()
-            await self._warn(event, state, now, "muted", force=True,
-                             minutes=max(1, round(FLOOD_MUTE_SECONDS / 60)))
+            await self._warn(event, state, now, "muted", force=True, time=format_seconds(mute))
             return None
 
         if too_fast:
             await self._warn(event, state, now, "flood")
             return None
 
-        if event.text and event.text == state.last_text and now - state.last_text_time < DUPLICATE_WINDOW:
+        if event.text and event.text == state.last_text and now - state.last_text_time < get_limit("duplicate_window"):
             await self._warn(event, state, now, "duplicate")
             return None
 
@@ -107,7 +106,7 @@ class AntiFloodMiddleware(BaseMiddleware):
         """Не даём словарю бесконечно расти."""
         if len(self.users) < 10_000:
             return
-        ttl = max(FLOOD_WINDOW, DUPLICATE_WINDOW, FLOOD_MUTE_SECONDS)
+        ttl = max(get_limit("flood_window"), get_limit("duplicate_window"), get_limit("flood_mute"))
         for uid in [uid for uid, s in self.users.items()
                     if now - s.last_time > ttl and now > s.muted_until]:
             del self.users[uid]

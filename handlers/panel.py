@@ -19,6 +19,7 @@ from database import db
 from filters import IsAdmin, is_super_admin, get_group_id
 from handlers.admin import HELP
 from handlers.common import format_person, person_info, apply_group, admins_text, refreshed_admins
+from limits import LIMITS, get_limit, set_limit, reset_limits
 from texts import DEFAULTS, DISABLED, get_raw, render
 
 router = Router()
@@ -36,6 +37,11 @@ class Input(StatesGroup):
     ban_add = State()
     text_edit = State()
     group_set = State()
+    limit_edit = State()
+
+
+# Во время ввода команды не считаются ответом (например, /admin — выход в меню)
+not_command = ~F.text.startswith("/")
 
 
 def btn(kb: InlineKeyboardBuilder, text: str, action: str, arg: str = ""):
@@ -86,9 +92,10 @@ async def main_screen(target: Message | CallbackQuery):
     btn(kb, "🚫 Блокировки", "bans")
     btn(kb, "📝 Тексты", "texts")
     btn(kb, "👥 Рабочая группа", "group")
+    btn(kb, "🛡 Антифлуд", "limits")
     btn(kb, "📊 Статистика", "stats")
     btn(kb, "❓ Как работает бот", "help")
-    kb.adjust(2, 2, 2)
+    kb.adjust(2, 2, 2, 1)
     await show(target, text, kb.as_markup())
 
 
@@ -107,7 +114,7 @@ async def cb_main(call: CallbackQuery, state: FSMContext):
 @router.callback_query(Panel.filter(F.action == "cancel"))
 async def cb_cancel(call: CallbackQuery, callback_data: Panel, state: FSMContext):
     await state.clear()
-    screens = {"admins": admins_screen, "bans": bans_screen, "group": group_screen}
+    screens = {"admins": admins_screen, "bans": bans_screen, "group": group_screen, "limits": limits_screen}
     if callback_data.arg.startswith("text-"):
         await text_screen(call, callback_data.arg[5:])
     else:
@@ -132,6 +139,7 @@ HOW_IT_WORKS = """<b>❓ Как работает бот</b>
 • 🚫 Блокировки — список заблокированных, разблокировка, блокировка по ID.
 • 📝 Тексты — все сообщения бота можно изменить или отключить.
 • 👥 Рабочая группа — проверить или сменить группу.
+• 🛡 Антифлуд — сколько сообщений и за какое время можно отправить, длительность мута и т.д.
 • 📊 Статистика — сколько пользователей, активных, новых, заблокированных, сообщений и ответов.
 
 """
@@ -140,6 +148,76 @@ HOW_IT_WORKS = """<b>❓ Как работает бот</b>
 @router.callback_query(Panel.filter(F.action == "help"))
 async def cb_help(call: CallbackQuery):
     await show(call, HOW_IT_WORKS + HELP, back_kb())
+
+
+# ==================== АНТИФЛУД ====================
+
+async def limits_screen(target: Message | CallbackQuery):
+    lines = []
+    kb = InlineKeyboardBuilder()
+    for key, limit in LIMITS.items():
+        value = get_limit(key)
+        shown = "выкл." if value == 0 and limit.minimum == 0 else f"{value} {limit.unit}"
+        changed = " ✏️" if value != limit.default else ""
+        lines.append(f"• <b>{limit.title}:</b> {shown}{changed}\n  <i>{limit.hint}</i>")
+        btn(kb, f"{limit.title}: {shown}", "limit", key)
+    btn(kb, "↩️ Всё по умолчанию", "limits_reset")
+    btn(kb, "⬅️ Назад", "main")
+    kb.adjust(1)
+    text = (
+        "<b>🛡 Антифлуд</b> (только для клиентов, группа и админы без ограничений)\n\n"
+        + "\n".join(lines)
+        + f"\n\nСейчас: не больше <b>{get_limit('flood_max')}</b> сообщений за <b>{get_limit('flood_window')} сек</b>, "
+        f"иначе мут на <b>{get_limit('flood_mute')} сек</b>. Во время мута клиенту приходит, сколько ждать.\n"
+        "Нажмите на параметр, чтобы изменить. ✏️ — изменено вами."
+    )
+    await show(target, text, kb.as_markup())
+
+
+@router.callback_query(Panel.filter(F.action == "limits"))
+async def cb_limits(call: CallbackQuery):
+    await limits_screen(call)
+
+
+@router.callback_query(Panel.filter(F.action == "limits_reset"))
+async def cb_limits_reset(call: CallbackQuery):
+    reset_limits()
+    await call.answer("Сброшено по умолчанию")
+    await limits_screen(call)
+
+
+@router.callback_query(Panel.filter(F.action == "limit"))
+async def cb_limit(call: CallbackQuery, callback_data: Panel, state: FSMContext):
+    key = callback_data.arg
+    if key not in LIMITS:
+        return
+    limit = LIMITS[key]
+    await state.set_state(Input.limit_edit)
+    await state.update_data(key=key)
+    await show(
+        call,
+        f"✏️ <b>{limit.title}</b>\n{limit.hint}\n\n"
+        f"Сейчас: <b>{get_limit(key)} {limit.unit}</b> (по умолчанию {limit.default})\n"
+        f"Отправьте число от {limit.minimum} до {limit.maximum}.",
+        cancel_kb("limits"),
+    )
+
+
+@router.message(Input.limit_edit, not_command)
+async def input_limit_edit(message: Message, state: FSMContext):
+    key = (await state.get_data()).get("key")
+    limit = LIMITS[key]
+    try:
+        value = int((message.text or "").strip())
+    except ValueError:
+        value = None
+    if value is None or not limit.minimum <= value <= limit.maximum:
+        await message.answer(f"Нужно число от {limit.minimum} до {limit.maximum}.", reply_markup=cancel_kb("limits"))
+        return
+    await state.clear()
+    set_limit(key, value)
+    await message.answer(f"✅ {limit.title}: {value} {limit.unit}")
+    await limits_screen(message)
 
 
 # ==================== СТАТИСТИКА ====================
@@ -238,9 +316,6 @@ async def person_from_input(message: Message) -> Optional[tuple[int, str, str]]:
     except ValueError:
         return None
     return (user_id, *await person_info(message.bot, user_id))
-
-
-not_command = ~F.text.startswith("/")
 
 
 @router.message(Input.admin_add, not_command)

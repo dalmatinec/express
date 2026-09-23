@@ -26,10 +26,11 @@ DELIVERED_REACTION = os.getenv("DELIVERED_REACTION", "👍").strip()
 
 # ==================== АНТИФЛУД / АНТИСПАМ ====================
 # Действует только на пользователей в личке бота. В группе ограничений нет.
+# Это значения по умолчанию — их можно менять в админ-панели («🛡 Антифлуд»).
 
-FLOOD_MIN_INTERVAL = float(os.getenv("FLOOD_MIN_INTERVAL", "1.5"))  # мин. пауза между сообщениями, сек
-FLOOD_WINDOW = int(os.getenv("FLOOD_WINDOW", "60"))                # окно подсчёта, сек
-FLOOD_MAX_MESSAGES = int(os.getenv("FLOOD_MAX_MESSAGES", "10"))    # макс. сообщений за окно
+FLOOD_MAX_MESSAGES = int(os.getenv("FLOOD_MAX_MESSAGES", "7"))     # макс. сообщений за окно
+FLOOD_WINDOW = int(os.getenv("FLOOD_WINDOW", "5"))                 # окно подсчёта, сек
 FLOOD_MUTE_SECONDS = int(os.getenv("FLOOD_MUTE_SECONDS", "300"))   # мут при превышении, сек
-DUPLICATE_WINDOW = int(os.getenv("DUPLICATE_WINDOW", "60"))        # повтор одного текста игнорируется, сек
+FLOOD_MIN_INTERVAL = int(os.getenv("FLOOD_MIN_INTERVAL", "0"))     # мин. пауза между сообщениями, сек (0 — выкл.)
+DUPLICATE_WINDOW = int(os.getenv("DUPLICATE_WINDOW", "60"))        # повтор одного текста игнорируется, сек (0 — выкл.)
 MAX_TEXT_LENGTH = int(os.getenv("MAX_TEXT_LENGTH", "2000"))        # макс. длина сообщения
