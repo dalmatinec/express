@@ -74,6 +74,7 @@ async def group_reply(message: Message):
         await message.reply(render("delivery_failed", user_id=user_id) or "❌ Не доставлено.")
         return
 
+    db.increment("replies")
     try:
         await message.react([ReactionTypeEmoji(emoji="👍")])
     except Exception:

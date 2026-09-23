@@ -73,11 +73,13 @@ async def show(target: Message | CallbackQuery, text: str, markup: Optional[Inli
 async def main_screen(target: Message | CallbackQuery):
     group_id = get_group_id()
     group = f"<code>{group_id}</code>" if group_id else "❗ не задана"
+    stats = db.get_stats()
     text = (
         "<b>🛠 Админ-панель</b>\n\n"
         f"👥 Рабочая группа: {group}\n"
-        f"👮 Админов: {len(db.get_admins()) + 1}\n"
-        f"🚫 Заблокировано: {len(db.get_banned())}\n\n"
+        f"👤 Пользователей: {stats['users']} (активны за сутки: {stats['active_1']})\n"
+        f"🚫 Заблокировано: {stats['banned']}\n"
+        f"👮 Админов: {stats['admins']}\n\n"
         "Ваши сообщения боту в группу не пересылаются."
     )
     kb = InlineKeyboardBuilder()
@@ -85,8 +87,9 @@ async def main_screen(target: Message | CallbackQuery):
     btn(kb, "🚫 Блокировки", "bans")
     btn(kb, "📝 Тексты", "texts")
     btn(kb, "👥 Рабочая группа", "group")
+    btn(kb, "📊 Статистика", "stats")
     btn(kb, "❓ Как работает бот", "help")
-    kb.adjust(2, 2, 1)
+    kb.adjust(2, 2, 2)
     await show(target, text, kb.as_markup())
 
 
@@ -130,6 +133,7 @@ HOW_IT_WORKS = """<b>❓ Как работает бот</b>
 • 🚫 Блокировки — список заблокированных, разблокировка, блокировка по ID.
 • 📝 Тексты — все сообщения бота можно изменить или отключить.
 • 👥 Рабочая группа — проверить или сменить группу.
+• 📊 Статистика — сколько пользователей, активных, новых, заблокированных, сообщений и ответов.
 
 """
 
@@ -137,6 +141,40 @@ HOW_IT_WORKS = """<b>❓ Как работает бот</b>
 @router.callback_query(Panel.filter(F.action == "help"))
 async def cb_help(call: CallbackQuery):
     await show(call, HOW_IT_WORKS + HELP, back_kb())
+
+
+# ==================== СТАТИСТИКА ====================
+
+async def stats_screen(target: Message | CallbackQuery):
+    s = db.get_stats()
+    text = (
+        "<b>📊 Статистика</b>\n\n"
+        "<b>Пользователи</b>\n"
+        f"👤 Всего: {s['users']}\n"
+        f"🆕 Новых за сутки: {s['new_1']} · за 7 дней: {s['new_7']}\n"
+        f"🟢 Активных за сутки: {s['active_1']} · за 7 дней: {s['active_7']} · за 30 дней: {s['active_30']}\n"
+        f"🚫 Заблокировано: {s['banned']}\n\n"
+        "<b>Сообщения</b>\n"
+        f"📨 От клиентов в группу: {s['messages']} (за сутки: {s['messages_1']})\n"
+        f"💬 Ответов из группы: {s['replies']}\n\n"
+        f"👮 Админов: {s['admins']}\n\n"
+        "<i>Активный — писал боту за указанный период. Тексты сообщений не хранятся, только количество.</i>"
+    )
+    kb = InlineKeyboardBuilder()
+    btn(kb, "🔄 Обновить", "stats")
+    btn(kb, "⬅️ Назад", "main")
+    kb.adjust(2)
+    await show(target, text, kb.as_markup())
+
+
+@router.callback_query(Panel.filter(F.action == "stats"))
+async def cb_stats(call: CallbackQuery):
+    await stats_screen(call)
+
+
+@router.message(Command("stats"))
+async def cmd_stats(message: Message):
+    await stats_screen(message)
 
 
 # ==================== АДМИНИСТРАТОРЫ ====================

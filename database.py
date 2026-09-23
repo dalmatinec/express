@@ -54,7 +54,9 @@ class Database:
                     first_name TEXT,
                     last_name TEXT,
                     username TEXT,
-                    is_banned INTEGER DEFAULT 0
+                    is_banned INTEGER DEFAULT 0,
+                    first_seen TEXT DEFAULT CURRENT_TIMESTAMP,
+                    last_seen TEXT DEFAULT CURRENT_TIMESTAMP
                 )
             """)
             # Связь "сообщение в группе -> пользователь"
@@ -63,6 +65,7 @@ class Database:
                     chat_id INTEGER NOT NULL,
                     message_id INTEGER NOT NULL,
                     user_id INTEGER NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (chat_id, message_id)
                 )
             """)
@@ -80,6 +83,13 @@ class Database:
                     value TEXT
                 )
             """)
+            # Счётчики для статистики (например, количество ответов)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS counters (
+                    key TEXT PRIMARY KEY,
+                    value INTEGER NOT NULL DEFAULT 0
+                )
+            """)
             # Тексты, изменённые через /settext (перекрывают texts.json)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS texts (
@@ -87,22 +97,7 @@ class Database:
                     value TEXT NOT NULL
                 )
             """)
-            # Миграция со старых версий бота: добавляем недостающие колонки
-            self._add_columns(conn, "admins", {"name": "TEXT", "username": "TEXT"})
-            self._add_columns(conn, "users", {"is_banned": "INTEGER DEFAULT 0"})
-            self._add_columns(conn, "settings", {"value": "TEXT"})
-            # Баны из старой таблицы blocks переносим в users
-            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='blocks'").fetchone():
-                conn.execute("""INSERT INTO users (user_id, is_banned) SELECT user_id, 1 FROM blocks WHERE true
-                                ON CONFLICT(user_id) DO UPDATE SET is_banned = 1""")
         conn.close()
-
-    @staticmethod
-    def _add_columns(conn: sqlite3.Connection, table: str, columns: dict):
-        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
-        for column, column_type in columns.items():
-            if column not in existing:
-                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
     # ==================== ПОЛЬЗОВАТЕЛИ ====================
 
@@ -112,7 +107,8 @@ class Database:
                ON CONFLICT(user_id) DO UPDATE SET
                    first_name = excluded.first_name,
                    last_name = excluded.last_name,
-                   username = excluded.username""",
+                   username = excluded.username,
+                   last_seen = CURRENT_TIMESTAMP""",
             (user_id, first_name, last_name, username)
         )
 
@@ -122,7 +118,8 @@ class Database:
 
     def set_banned(self, user_id: int, banned: bool):
         self.execute(
-            """INSERT INTO users (user_id, is_banned) VALUES (?, ?)
+            # Если человек ещё не писал боту — не считаем его пользователем в статистике
+            """INSERT INTO users (user_id, is_banned, first_seen, last_seen) VALUES (?, ?, NULL, NULL)
                ON CONFLICT(user_id) DO UPDATE SET is_banned = excluded.is_banned""",
             (user_id, int(banned))
         )
@@ -194,6 +191,36 @@ class Database:
     def get_text(self, key: str) -> Optional[str]:
         row = self.fetchone("SELECT value FROM texts WHERE key = ?", (key,))
         return row["value"] if row else None
+
+    # ==================== СТАТИСТИКА ====================
+
+    def increment(self, key: str):
+        self.execute(
+            "INSERT INTO counters (key, value) VALUES (?, 1) ON CONFLICT(key) DO UPDATE SET value = value + 1",
+            (key,)
+        )
+
+    def get_stats(self) -> dict:
+        def count(query: str) -> int:
+            return self.fetchone(query)[0]
+
+        def since(days: int) -> str:
+            return f"datetime('now', '-{days} days')"
+
+        replies = self.fetchone("SELECT value FROM counters WHERE key = 'replies'")
+        return {
+            "users": count("SELECT COUNT(*) FROM users WHERE first_seen IS NOT NULL"),
+            "new_1": count(f"SELECT COUNT(*) FROM users WHERE first_seen >= {since(1)}"),
+            "new_7": count(f"SELECT COUNT(*) FROM users WHERE first_seen >= {since(7)}"),
+            "active_1": count(f"SELECT COUNT(*) FROM users WHERE last_seen >= {since(1)}"),
+            "active_7": count(f"SELECT COUNT(*) FROM users WHERE last_seen >= {since(7)}"),
+            "active_30": count(f"SELECT COUNT(*) FROM users WHERE last_seen >= {since(30)}"),
+            "banned": count("SELECT COUNT(*) FROM users WHERE is_banned = 1"),
+            "admins": count("SELECT COUNT(*) FROM admins") + 1,  # + супер-админ
+            "messages": count("SELECT COUNT(*) FROM links"),
+            "messages_1": count(f"SELECT COUNT(*) FROM links WHERE created_at >= {since(1)}"),
+            "replies": replies["value"] if replies else 0,
+        }
 
 
 # Глобальный экземпляр БД
