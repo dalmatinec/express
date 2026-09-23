@@ -8,9 +8,10 @@ import logging
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 
-from config import TOKEN
+from config import TOKEN, PROXY
 from middleware import AntiFloodMiddleware
 from handlers.panel import router as panel_router
 from handlers.admin import router as admin_router
@@ -25,7 +26,11 @@ logger = logging.getLogger(__name__)
 
 
 async def main():
-    bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    # Через прокси (например, туннель на зарубежный сервер), если он задан в .env
+    session = AiohttpSession(proxy=PROXY) if PROXY else AiohttpSession()
+    if PROXY:
+        logger.info("Запросы к Telegram идут через прокси %s", PROXY)
+    bot = Bot(token=TOKEN, session=session, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
 
     # Антифлуд только для пользователей в личке — рабочая группа без ограничений

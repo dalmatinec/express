@@ -16,6 +16,10 @@ SUPER_ADMIN_IDS = [
 ]
 DATABASE_PATH = os.getenv("DATABASE_PATH", "database.db")
 
+# Прокси для запросов к Telegram, например SSH-туннель: socks5://127.0.0.1:1080
+# Пусто — напрямую.
+PROXY = os.getenv("PROXY", "").strip() or None
+
 # Группа по умолчанию (можно сменить командой /setgroup, значение из БД важнее)
 DEFAULT_GROUP_ID = int(os.getenv("GROUP_ID", "0")) or None
 
