@@ -12,6 +12,7 @@ from aiogram.enums import ParseMode
 
 from config import TOKEN
 from middleware import AntiFloodMiddleware
+from handlers.panel import router as panel_router
 from handlers.admin import router as admin_router
 from handlers.group import router as group_router
 from handlers.user import router as user_router
@@ -30,7 +31,8 @@ async def main():
     # Антифлуд только для пользователей в личке — рабочая группа без ограничений
     user_router.message.middleware(AntiFloodMiddleware())
 
-    # Порядок важен: команды админа -> рабочая группа -> пользователи
+    # Порядок важен: админ-панель -> команды админа -> рабочая группа -> пользователи
+    dp.include_router(panel_router)
     dp.include_router(admin_router)
     dp.include_router(group_router)
     dp.include_router(user_router)

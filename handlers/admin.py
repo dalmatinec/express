@@ -1,5 +1,5 @@
 """
-Команды администратора. Никаких форм и меню — только команды.
+Текстовые команды администратора (быстрый доступ к тому же, что есть в панели /admin).
 Всё, что админ пишет боту в личку (включая /start), в группу НЕ пересылается.
 """
 
@@ -7,13 +7,14 @@ import html
 
 from typing import Optional
 
-from aiogram import Bot, Router, F
-from aiogram.filters import Command, CommandObject, CommandStart, or_f
+from aiogram import Router, F
+from aiogram.filters import Command, CommandObject, or_f
 from aiogram.types import Message
 
 from config import SUPER_ADMIN_ID
 from database import db
 from filters import IsAdmin, IsSuperAdmin, IsWorkGroup, get_group_id
+from handlers.common import format_person, person_info, apply_group, admins_text
 from handlers.group import linked_user
 from texts import DEFAULTS, DISABLED, get_raw, render
 
@@ -25,6 +26,8 @@ private = F.chat.type == "private"
 private_or_group = or_f(private, IsWorkGroup())
 
 HELP = """<b>🛠 Команды администратора</b>
+
+Всё это также доступно кнопками: /admin
 
 <b>Группа</b>
 /setgroup — выполнить в группе, чтобы сделать её рабочей
@@ -58,7 +61,7 @@ def parse_id(command: CommandObject) -> int | None:
         return None
 
 
-@router.message(or_f(CommandStart(), Command("admin", "help")), private)
+@router.message(Command("help"), private)
 async def admin_help(message: Message):
     await message.answer(HELP)
 
@@ -77,16 +80,7 @@ async def set_group(message: Message, command: CommandObject):
             )
             return
 
-    try:
-        chat = await message.bot.get_chat(group_id)
-    except Exception as e:
-        await message.answer(f"❌ Бот не видит группу <code>{group_id}</code>: {html.escape(str(e))}")
-        return
-
-    db.set_setting("group_id", str(group_id))
-    await message.answer(
-        f"✅ Рабочая группа: <b>{html.escape(chat.title or '')}</b> (<code>{group_id}</code>)"
-    )
+    await message.answer(await apply_group(message.bot, group_id))
 
 
 @router.message(Command("group"), private)
@@ -155,27 +149,6 @@ async def reset_text(message: Message, command: CommandObject):
 
 
 # ==================== ИМЕНА ====================
-
-def format_person(user_id: int, name: str = "", username: str = "") -> str:
-    """«Имя (@username) — ID», чтобы было понятно, чей это ID."""
-    parts = [html.escape(name) if name else "Без имени"]
-    if username:
-        parts.append(f"(@{username})")
-    return f"{' '.join(parts)} — <code>{user_id}</code>"
-
-
-async def person_info(bot: Bot, user_id: int) -> tuple[str, str]:
-    """Имя и username по ID: из Telegram, иначе из базы."""
-    try:
-        chat = await bot.get_chat(user_id)
-        name = " ".join(filter(None, [chat.first_name, chat.last_name])) or (chat.title or "")
-        return name, chat.username or ""
-    except Exception:
-        pass
-    known = db.get_user(user_id) or db.get_admin(user_id) or {}
-    name = known.get("name") or " ".join(filter(None, [known.get("first_name"), known.get("last_name")]))
-    return name or "", known.get("username") or ""
-
 
 async def resolve_target(message: Message, command: CommandObject,
                          allow_staff: bool = False) -> Optional[tuple[int, str, str]]:
@@ -259,15 +232,7 @@ async def del_admin(message: Message, command: CommandObject):
 
 @router.message(Command("admins"), private_or_group, IsSuperAdmin())
 async def list_admins(message: Message):
-    lines = [f"👑 {format_person(SUPER_ADMIN_ID, *await person_info(message.bot, SUPER_ADMIN_ID))}"]
-    for admin in db.get_admins():
-        name, username = await person_info(message.bot, admin["admin_id"])
-        name, username = name or admin["name"] or "", username or admin["username"] or ""
-        # Имя могло поменяться — обновляем в базе
-        if (name, username) != (admin["name"] or "", admin["username"] or ""):
-            db.add_admin(admin["admin_id"], name, username)
-        lines.append(f"👮 {format_person(admin['admin_id'], name, username)}")
-    await message.reply("<b>Администраторы</b>\n\n" + "\n".join(lines))
+    await message.reply(await admins_text(message.bot))
 
 
 @router.message(Command("addadmin", "deladmin", "admins"), private_or_group)
@@ -282,4 +247,4 @@ async def admin_other(message: Message):
     Любое другое сообщение админа в личке: не пересылаем в группу,
     чтобы операторы не приняли админа за клиента.
     """
-    await message.answer("ℹ️ Вы администратор — ваши сообщения в группу не пересылаются.\nКоманды: /admin")
+    await message.answer("ℹ️ Вы администратор — ваши сообщения в группу не пересылаются.\nПанель: /admin")

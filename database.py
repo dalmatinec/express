@@ -117,6 +117,9 @@ class Database:
             (user_id, int(banned))
         )
 
+    def get_banned(self) -> List[dict]:
+        return [dict(row) for row in self.fetchall("SELECT * FROM users WHERE is_banned = 1")]
+
     def is_banned(self, user_id: int) -> bool:
         row = self.fetchone("SELECT is_banned FROM users WHERE user_id = ?", (user_id,))
         return bool(row and row["is_banned"])

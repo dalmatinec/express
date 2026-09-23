@@ -5,7 +5,7 @@
 from typing import Optional
 
 from aiogram.filters import BaseFilter
-from aiogram.types import Message
+from aiogram.types import Message, TelegramObject
 
 from config import SUPER_ADMIN_ID, DEFAULT_GROUP_ID
 from database import db
@@ -31,13 +31,16 @@ def get_group_id() -> Optional[int]:
 
 
 class IsAdmin(BaseFilter):
-    async def __call__(self, message: Message) -> bool:
-        return message.from_user is not None and is_admin(message.from_user.id)
+    """Для сообщений и нажатий кнопок."""
+    async def __call__(self, event: TelegramObject) -> bool:
+        user = getattr(event, "from_user", None)
+        return user is not None and is_admin(user.id)
 
 
 class IsSuperAdmin(BaseFilter):
-    async def __call__(self, message: Message) -> bool:
-        return message.from_user is not None and is_super_admin(message.from_user.id)
+    async def __call__(self, event: TelegramObject) -> bool:
+        user = getattr(event, "from_user", None)
+        return user is not None and is_super_admin(user.id)
 
 
 class IsWorkGroup(BaseFilter):
