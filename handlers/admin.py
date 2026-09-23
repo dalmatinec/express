@@ -1,5 +1,6 @@
 """
 Команды администратора. Никаких форм и меню — только команды.
+Всё, что админ пишет боту в личку (включая /start), в группу НЕ пересылается.
 """
 
 import html
@@ -7,7 +8,7 @@ import html
 from typing import Optional
 
 from aiogram import Bot, Router, F
-from aiogram.filters import Command, CommandObject, or_f
+from aiogram.filters import Command, CommandObject, CommandStart, or_f
 from aiogram.types import Message
 
 from config import SUPER_ADMIN_ID
@@ -57,7 +58,7 @@ def parse_id(command: CommandObject) -> int | None:
         return None
 
 
-@router.message(Command("admin", "help"), private)
+@router.message(or_f(CommandStart(), Command("admin", "help")), private)
 async def admin_help(message: Message):
     await message.answer(HELP)
 
@@ -273,3 +274,12 @@ async def list_admins(message: Message):
 async def super_admin_only(message: Message):
     """Обычный админ вызвал команду супер-админа."""
     await message.reply("⛔ Управлять админами может только супер-админ.")
+
+
+@router.message(private)
+async def admin_other(message: Message):
+    """
+    Любое другое сообщение админа в личке: не пересылаем в группу,
+    чтобы операторы не приняли админа за клиента.
+    """
+    await message.answer("ℹ️ Вы администратор — ваши сообщения в группу не пересылаются.\nКоманды: /admin")
