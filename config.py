@@ -10,7 +10,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
-SUPER_ADMIN_ID = int(os.getenv("SUPER_ADMIN_ID", "123456789"))  # User ID супер-администратора
+# Супер-админы: один или несколько ID через запятую, например 111,222,333
+SUPER_ADMIN_IDS = [
+    int(part) for part in os.getenv("SUPER_ADMIN_ID", "123456789").replace(" ", "").split(",") if part
+]
 DATABASE_PATH = os.getenv("DATABASE_PATH", "database.db")
 
 # Группа по умолчанию (можно сменить командой /setgroup, значение из БД важнее)

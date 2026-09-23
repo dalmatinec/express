@@ -7,12 +7,12 @@ from typing import Optional
 from aiogram.filters import BaseFilter
 from aiogram.types import Message, TelegramObject
 
-from config import SUPER_ADMIN_ID, DEFAULT_GROUP_ID
+from config import SUPER_ADMIN_IDS, DEFAULT_GROUP_ID
 from database import db
 
 
 def is_super_admin(user_id: int) -> bool:
-    return user_id == SUPER_ADMIN_ID
+    return user_id in SUPER_ADMIN_IDS
 
 
 def is_admin(user_id: int) -> bool:

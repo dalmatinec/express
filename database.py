@@ -6,7 +6,7 @@
 import sqlite3
 from typing import Optional, List
 
-from config import DATABASE_PATH
+from config import DATABASE_PATH, SUPER_ADMIN_IDS
 
 
 class Database:
@@ -216,7 +216,7 @@ class Database:
             "active_7": count(f"SELECT COUNT(*) FROM users WHERE last_seen >= {since(7)}"),
             "active_30": count(f"SELECT COUNT(*) FROM users WHERE last_seen >= {since(30)}"),
             "banned": count("SELECT COUNT(*) FROM users WHERE is_banned = 1"),
-            "admins": count("SELECT COUNT(*) FROM admins") + 1,  # + супер-админ
+            "admins": count("SELECT COUNT(*) FROM admins") + len(SUPER_ADMIN_IDS),  # + супер-админы
             "messages": count("SELECT COUNT(*) FROM links"),
             "messages_1": count(f"SELECT COUNT(*) FROM links WHERE created_at >= {since(1)}"),
             "replies": replies["value"] if replies else 0,

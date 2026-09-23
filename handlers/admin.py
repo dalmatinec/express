@@ -11,9 +11,8 @@ from aiogram import Router, F
 from aiogram.filters import Command, CommandObject, or_f
 from aiogram.types import Message
 
-from config import SUPER_ADMIN_ID
 from database import db
-from filters import IsAdmin, IsSuperAdmin, IsWorkGroup, get_group_id
+from filters import IsAdmin, IsSuperAdmin, IsWorkGroup, get_group_id, is_super_admin
 from handlers.common import format_person, person_info, apply_group, admins_text
 from handlers.group import linked_user
 from texts import DEFAULTS, DISABLED, get_raw, render
@@ -207,7 +206,7 @@ async def add_admin(message: Message, command: CommandObject):
             "Ответьте на сообщение человека в группе командой /addadmin или укажите ID: /addadmin <code>123456</code>"
         )
         return
-    if target[0] == SUPER_ADMIN_ID:
+    if is_super_admin(target[0]):
         await message.reply("ℹ️ Это супер-админ.")
         return
     added = db.add_admin(*target)

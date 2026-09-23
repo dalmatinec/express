@@ -10,7 +10,7 @@ from typing import Awaitable, Callable, TypeVar
 from aiogram import Bot
 from aiogram.exceptions import TelegramRetryAfter
 
-from config import SUPER_ADMIN_ID
+from config import SUPER_ADMIN_IDS
 from database import db
 
 logger = logging.getLogger(__name__)
@@ -66,7 +66,7 @@ async def refreshed_admins(bot: Bot) -> list[dict]:
 
 
 async def admins_text(bot: Bot) -> str:
-    lines = [f"👑 {format_person(SUPER_ADMIN_ID, *await person_info(bot, SUPER_ADMIN_ID))}"]
+    lines = [f"👑 {format_person(sid, *await person_info(bot, sid))}" for sid in SUPER_ADMIN_IDS]
     for admin in await refreshed_admins(bot):
         lines.append(f"👮 {format_person(admin['admin_id'], admin['name'], admin['username'])}")
     return "<b>👮 Администраторы</b>\n\n" + "\n".join(lines)

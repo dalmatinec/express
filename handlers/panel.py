@@ -19,7 +19,6 @@ from database import db
 from filters import IsAdmin, is_super_admin, get_group_id
 from handlers.admin import HELP
 from handlers.common import format_person, person_info, apply_group, admins_text, refreshed_admins
-from config import SUPER_ADMIN_ID
 from texts import DEFAULTS, DISABLED, get_raw, render
 
 router = Router()
@@ -255,7 +254,7 @@ async def input_admin_add(message: Message, state: FSMContext):
         )
         return
     await state.clear()
-    if person[0] == SUPER_ADMIN_ID:
+    if is_super_admin(person[0]):
         await message.answer("ℹ️ Это супер-админ.")
     else:
         added = db.add_admin(*person)
