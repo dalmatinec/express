@@ -15,10 +15,9 @@ from aiogram.types import (
 from .. import ui
 from ..app import App, now
 from ..services.backup import make_backup, restore_backup, send_backup
-from ..services.premium import check as premium_check
 from ..services.publisher import channel_rights
 from ..states import Adm
-from ..utils.text import first_custom_emoji, short
+from ..utils.text import short
 from .common import clicked, parts
 
 router = Router(name="admin")
@@ -54,7 +53,6 @@ async def show_main(app: App, uid: int, edit: Message | None = None, note: str =
     if owner:
         rows.append([ui.b(f"👮 Админы ({len(app.admins)})", "a:adm")])
         rows.append([ui.b("💾 Бэкап", "a:bk")])
-    rows.append([ui.b("✨ Проверить премиум-эмодзи", "a:prem")])
     role = "владелец" if owner else "админ"
     text = (f"⚙️ Админка\n\nВы: {role}\nБот: @{escape(app.bot_username)}\nКаналов: {len(channels)}\n"
             f"Часовой пояс: {app.config.tz_name}")
@@ -333,22 +331,6 @@ async def got_restore(message: Message, state: FSMContext, app: App) -> None:
     await show_main(app, uid, note=note)
 
 
-# ---------- премиум ----------
-
-@router.message(Adm.premium)
-async def got_premium(message: Message, state: FSMContext, app: App) -> None:
-    uid = message.from_user.id
-    await ui.drop_input(message)
-    emoji = first_custom_emoji(message)
-    if emoji is None:
-        await ui.show(app, uid, "⚠️ Это не премиум-эмодзи. Пришлите любое эмодзи из премиум-набора.",
-                      ui.kb([[ui.b("🔙 Админка", "a:main")]]))
-        return
-    await state.clear()
-    result = await premium_check(app, uid, emoji)
-    await show_main(app, uid, note=result)
-
-
 # ---------- нажатия ----------
 
 @router.callback_query(F.data.startswith("a:"))
@@ -485,11 +467,6 @@ async def admin_cb(cq: CallbackQuery, state: FSMContext, app: App) -> None:
         await cq.answer("Сохранено")
         await show_backup(app, uid, edit=msg)
 
-    elif action == "prem":
-        await cq.answer()
-        await state.set_state(Adm.premium)
-        await ui.show(app, uid, "✨ Пришлите любое премиум-эмодзи. Бот попробует отправить его в тексте и на кнопке "
-                                "и скажет, видно ли его.", ui.kb([[ui.b("🔙 Админка", "a:main")]]), edit=msg)
     else:
         await cq.answer()
 

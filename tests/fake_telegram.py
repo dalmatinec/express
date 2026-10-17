@@ -47,7 +47,6 @@ class FakeTelegram(BaseSession):
     chats: dict[int, dict] = field(default_factory=dict)   # id -> {title, type, username}
     no_rights: set[int] = field(default_factory=set)       # тут бот без права публиковать
     gone: set[int] = field(default_factory=set)            # отсюда бота выкинули
-    premium_ok: bool = True
     pinned: list[tuple[int, int]] = field(default_factory=list)
     left: list[int] = field(default_factory=list)
     alerts: list[str] = field(default_factory=list)
@@ -84,16 +83,11 @@ class FakeTelegram(BaseSession):
                 data["document"] = {"file_id": fid, "file_unique_id": fid}
         body = m.text if m.kind == "text" else m.caption
         found = re.search(r'emoji-id="(\d+)"', body or "")
-        if self.premium_ok and found:
+        if found:
             data["entities" if m.kind == "text" else "caption_entities"] = [
                 {"type": "custom_emoji", "offset": 0, "length": 1, "custom_emoji_id": found[1]}]
         if m.markup is not None and hasattr(m.markup, "inline_keyboard"):
-            dump = m.markup.model_dump(exclude_none=True)
-            if not self.premium_ok:
-                for row in dump.get("inline_keyboard", []):
-                    for btn in row:
-                        btn.pop("icon_custom_emoji_id", None)
-            data["reply_markup"] = dump
+            data["reply_markup"] = m.markup.model_dump(exclude_none=True)
         return Message.model_validate(data, context={"bot": bot})
 
     def chat(self, chat_id: int) -> list[ChatMessage]:

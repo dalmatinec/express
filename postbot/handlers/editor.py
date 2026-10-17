@@ -11,7 +11,6 @@ from ..app import App
 from ..models import Post
 from ..services import posts as P
 from ..services.media import KIND_NAMES, media_of
-from ..services.premium import HOW_TO_FIX, lost_emoji
 from ..services.publisher import results_text, update_everywhere
 from ..services.render import RenderError, send_post
 from ..states import Edit
@@ -88,8 +87,6 @@ async def render(app: App, user_id: int, post_id: int, text: str, markup: Inline
         try:
             sent = await send_post(app, user_id, post, buttons, preview=True)
             preview_id = sent.message_id
-            if lost_emoji(post.html, sent):
-                note = "\n\n⚠️ Telegram убрал премиум-эмодзи из предпросмотра.\n" + HOW_TO_FIX
         except (TelegramAPIError, RenderError) as e:
             note = f"\n\n⚠️ Предпросмотр не отправился: {h(getattr(e, 'message', str(e)))}"
     msg = await app.bot.send_message(user_id, text + note, reply_markup=markup)

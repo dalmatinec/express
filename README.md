@@ -127,7 +127,7 @@ bash /opt/postbot/deploy/install.sh /root/backup.zip
 ### Премиум-эмодзи
 
 Telegram показывает премиум-эмодзи от бота, только если у аккаунта, который создал бота в @BotFather,
-есть Telegram Premium, либо у бота куплен юзернейм на Fragment. Проверить: Админка, Проверить премиум-эмодзи.
+есть Telegram Premium, либо у бота куплен юзернейм на Fragment.
 
 ### Всплывающие окна
 
@@ -163,7 +163,6 @@ postbot/
     media.py         медиа на диске и file_id
     backup.py        бэкап и восстановление
     jobs.py          фоновые задачи
-    premium.py       проверка премиум-эмодзи
   utils/
     layout.py        перемещение кнопок по рядам
     text.py          текст, ссылки, кнопки списком

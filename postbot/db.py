@@ -115,6 +115,25 @@ MIGRATIONS: list[str] = [
     CREATE INDEX ix_pub_run ON publications(status, run_at);
     CREATE INDEX ix_pub_delete ON publications(status, delete_at);
     """,
+    # 2: индексы под каждую выборку бота, чтобы ни один запрос не перебирал таблицу целиком
+    """
+    CREATE INDEX ix_posts_media ON posts(media_id);
+    CREATE INDEX ix_posts_source ON posts(source_id, is_draft, author_id);
+    DROP INDEX ix_pub_post;
+    CREATE INDEX ix_pub_post ON publications(post_id, status);
+    CREATE INDEX ix_pub_channel ON publications(channel_id, status);
+    DROP INDEX ix_pub_run;
+    CREATE INDEX ix_pub_run ON publications(run_at) WHERE status = 'scheduled';
+    DROP INDEX ix_pub_delete;
+    CREATE INDEX ix_pub_delete ON publications(delete_at) WHERE status = 'sent' AND delete_at IS NOT NULL;
+    DROP INDEX ix_buttons_token;
+    CREATE INDEX ix_buttons_token ON post_buttons(token) WHERE kind = 'popup';
+    CREATE INDEX ix_media_created ON media(created_at);
+    CREATE INDEX ix_admin_channels_channel ON admin_channels(channel_id);
+    CREATE INDEX ix_channels_title ON channels(title COLLATE NOCASE);
+    CREATE INDEX ix_pub_sending ON publications(id) WHERE status = 'sending';
+    ANALYZE;
+    """,
 ]
 
 
@@ -132,14 +151,26 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = await aiosqlite.connect(self.path)
         self._conn.row_factory = aiosqlite.Row
-        for pragma in ("journal_mode=WAL", "synchronous=NORMAL", "foreign_keys=ON", "busy_timeout=5000"):
+        for pragma in (
+            "journal_mode=WAL",       # чтение не ждёт запись
+            "synchronous=NORMAL",     # с WAL это надёжно и намного быстрее FULL
+            "foreign_keys=ON",
+            "busy_timeout=5000",
+            "temp_store=MEMORY",
+            "cache_size=-16000",      # около 16 МБ кэша страниц
+            "mmap_size=67108864",     # 64 МБ базы читаются прямо из памяти
+        ):
             await self._conn.execute(f"PRAGMA {pragma}")
         await self._migrate()
+        await self._conn.execute("PRAGMA optimize=0x10002")  # обновить статистику для планировщика
 
     async def close(self) -> None:
         if self._conn is not None:
-            await self._conn.close()
-            self._conn = None
+            try:
+                await self._conn.execute("PRAGMA optimize")
+            finally:
+                await self._conn.close()
+                self._conn = None
 
     async def _migrate(self) -> None:
         version = (await self.fetchval("PRAGMA user_version")) or 0
@@ -166,7 +197,10 @@ class Database:
         return cur.lastrowid or 0
 
     async def executemany(self, sql: str, rows: Iterable[Iterable[Any]]) -> None:
-        await self.conn.executemany(sql, [tuple(r) for r in rows])
+        data = [tuple(r) for r in rows]
+        if not data:
+            return
+        await self.conn.executemany(sql, data)
         await self.conn.commit()
 
     async def backup_to(self, target: Path) -> None:

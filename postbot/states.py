@@ -30,4 +30,3 @@ class Adm(StatesGroup):
     channel = State()   # подключение канала
     admin = State()     # добавление админа
     restore = State()   # файл бэкапа
-    premium = State()   # эмодзи для проверки
