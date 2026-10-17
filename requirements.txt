@@ -1,2 +1,4 @@
-aiogram==3.30.0
-python-dotenv==1.0.1
+aiogram==3.31.0
+aiosqlite==0.22.1
+# часовые пояса, если на сервере их нет в системе
+tzdata
