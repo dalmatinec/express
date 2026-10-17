@@ -93,11 +93,11 @@ async def render(app: App, user_id: int, post_id: int, text: str, markup: Inline
         except (TelegramAPIError, RenderError) as e:
             note = f"\n\n⚠️ Предпросмотр не отправился: {h(getattr(e, 'message', str(e)))}"
     msg = await app.bot.send_message(user_id, text + note, reply_markup=markup)
-    scr.update(panel=msg.message_id, preview=preview_id, preview_post=post_id, reply=False)
+    scr.update(panel=msg.message_id, preview=preview_id, preview_post=post_id)
     for mid in old:
-        await ui.safe_delete(app, user_id, mid)
+        await ui.retire(app, user_id, mid)
     if edit is not None and edit.message_id not in old and edit.message_id not in (msg.message_id, preview_id):
-        await ui.safe_delete(app, user_id, edit.message_id)
+        await ui.retire(app, user_id, edit.message_id)
 
 
 async def open_editor(app: App, user_id: int, post_id: int, *, edit: Message | None = None,

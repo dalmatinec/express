@@ -35,8 +35,8 @@ class App:
     admins: dict[int, Admin] = field(default_factory=dict)
     # экраны бота у каждого юзера: panel - панель с кнопками, preview - как выглядит пост
     screens: dict[int, dict[str, int]] = field(default_factory=dict)
-    # кто сейчас выбирает канал через кнопку, чтобы не писать ему дважды
-    connecting: set[int] = field(default_factory=set)
+    # кто сейчас подключает канал кнопкой (id -> до какого времени), чтобы не писать ему дважды
+    connecting: dict[int, int] = field(default_factory=dict)
 
     async def load(self) -> None:
         self.settings = {r["key"]: json.loads(r["value"]) for r in await self.db.fetchall("SELECT * FROM settings")}
@@ -50,6 +50,19 @@ class App:
         await self.db.execute("INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)",
                               (key, json.dumps(value, ensure_ascii=False)))
         self.settings[key] = value
+
+    def start_connecting(self, user_id: int) -> None:
+        self.connecting[user_id] = now() + 600
+
+    def stop_connecting(self, user_id: int, grace: int = 0) -> None:
+        """grace - ещё сколько секунд не дублировать сообщения о канале."""
+        if grace:
+            self.connecting[user_id] = now() + grace
+        else:
+            self.connecting.pop(user_id, None)
+
+    def is_connecting(self, user_id: int) -> bool:
+        return self.connecting.get(user_id, 0) > now()
 
     # ---------- доступ ----------
     def is_owner(self, user_id: int) -> bool:

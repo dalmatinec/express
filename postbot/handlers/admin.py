@@ -4,6 +4,7 @@ from html import escape
 from pathlib import Path
 
 from aiogram import F, Router
+from aiogram.filters import StateFilter
 from aiogram.exceptions import TelegramAPIError
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
@@ -24,7 +25,6 @@ router = Router(name="admin")
 router.message.filter(F.chat.type == "private")
 
 REQ_CHANNEL, REQ_GROUP, REQ_USER = 1, 2, 3
-CANCEL_TEXT = "❌ Отмена"
 
 # права, которые Telegram сам предложит выдать боту, когда выбираете канал кнопкой
 BOT_RIGHTS = ChatAdministratorRights(
@@ -111,13 +111,13 @@ def picker_keyboard() -> ReplyKeyboardMarkup:
         [KeyboardButton(text="👥 Выбрать группу", request_chat=KeyboardButtonRequestChat(
             request_id=REQ_GROUP, chat_is_channel=False, bot_administrator_rights=GROUP_RIGHTS,
             request_title=True, request_username=True))],
-        [KeyboardButton(text=CANCEL_TEXT, style="danger")],
+        [KeyboardButton(text=ui.CANCEL_TEXT, style="danger")],
     ], resize_keyboard=True, one_time_keyboard=True)
 
 
 async def ask_channel(app: App, uid: int, state: FSMContext) -> None:
     await state.set_state(Adm.channel)
-    app.connecting.add(uid)
+    app.start_connecting(uid)
     await ui.show(app, uid,
                   "➕ Подключение канала\n\n"
                   "Самое простое: нажмите внизу 📢 Выбрать канал. Telegram сам покажет ваши каналы и добавит "
@@ -130,7 +130,7 @@ async def ask_channel(app: App, uid: int, state: FSMContext) -> None:
 async def connect_chat(app: App, uid: int, chat_id: int, state: FSMContext) -> None:
     channel, error = await channel_rights(app, chat_id)
     await state.clear()
-    app.connecting.discard(uid)
+    app.stop_connecting(uid, grace=60)
     if channel is None:
         await ui.show(app, uid, f"⚠️ Не получилось: {escape(error or 'неизвестная ошибка')}.\n\n"
                                 "Проверьте, что бот добавлен в канал админом.", ui.main_keyboard())
@@ -147,9 +147,11 @@ async def connect_chat(app: App, uid: int, chat_id: int, state: FSMContext) -> N
     await show_channel(app, uid, channel.id)
 
 
-@router.message(Adm.channel, F.chat_shared)
+@router.message(F.chat_shared, StateFilter("*"))
 async def got_chat_shared(message: Message, state: FSMContext, app: App) -> None:
     await ui.drop_input(message)
+    if not app.can_manage_channels(message.from_user.id):
+        return
     await connect_chat(app, message.from_user.id, message.chat_shared.chat_id, state)
 
 
@@ -157,12 +159,6 @@ async def got_chat_shared(message: Message, state: FSMContext, app: App) -> None
 async def got_channel(message: Message, state: FSMContext, app: App) -> None:
     uid = message.from_user.id
     await ui.drop_input(message)
-    if message.text == CANCEL_TEXT:
-        await state.clear()
-        app.connecting.discard(uid)
-        await ui.show(app, uid, "Отменено.", ui.main_keyboard())
-        await show_channels(app, uid)
-        return
     chat_id: int | str | None = None
     origin = message.forward_origin
     if origin is not None and getattr(origin, "chat", None) is not None:
@@ -230,7 +226,7 @@ def user_picker() -> ReplyKeyboardMarkup:
         [KeyboardButton(text="👤 Выбрать человека", request_users=KeyboardButtonRequestUsers(
             request_id=REQ_USER, user_is_bot=False, max_quantity=1, request_name=True, request_username=True),
             style="primary")],
-        [KeyboardButton(text=CANCEL_TEXT, style="danger")],
+        [KeyboardButton(text=ui.CANCEL_TEXT, style="danger")],
     ], resize_keyboard=True, one_time_keyboard=True)
 
 
@@ -252,9 +248,11 @@ async def add_admin(app: App, uid: int, user_id: int, name: str, state: FSMConte
     await show_admin(app, uid, user_id)
 
 
-@router.message(Adm.admin, F.users_shared)
+@router.message(F.users_shared, StateFilter("*"))
 async def got_user_shared(message: Message, state: FSMContext, app: App) -> None:
     await ui.drop_input(message)
+    if not app.is_owner(message.from_user.id) or not message.users_shared.users:
+        return
     user = message.users_shared.users[0]
     name = " ".join(x for x in (user.first_name, user.last_name) if x) or (f"@{user.username}" if user.username else "")
     await add_admin(app, message.from_user.id, user.user_id, name, state)
@@ -264,11 +262,6 @@ async def got_user_shared(message: Message, state: FSMContext, app: App) -> None
 async def got_admin(message: Message, state: FSMContext, app: App) -> None:
     uid = message.from_user.id
     await ui.drop_input(message)
-    if message.text == CANCEL_TEXT:
-        await state.clear()
-        await ui.show(app, uid, "Отменено.", ui.main_keyboard())
-        await show_admins(app, uid)
-        return
     origin = message.forward_origin
     if origin is not None and getattr(origin, "sender_user", None) is not None:
         u = origin.sender_user
@@ -366,7 +359,7 @@ async def admin_cb(cq: CallbackQuery, state: FSMContext, app: App) -> None:
     uid, msg = cq.from_user.id, clicked(cq)
     owner = app.is_owner(uid)
     await state.clear()
-    app.connecting.discard(uid)
+    app.stop_connecting(uid)
 
     channel_actions = {"ch", "chc", "chr", "chd", "chdy", "chadd"}
     owner_actions = {"adm", "admc", "admadd", "admall", "admt", "admcc", "admd", "admdy", "bk", "bkgo", "bkr",

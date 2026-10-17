@@ -121,7 +121,10 @@ async def publish_cb(cq: CallbackQuery, state: FSMContext, app: App) -> None:
         cid = int(p[3])
         data = await state.get_data()
         sel = list(data.get("sel", []))
-        sel.remove(cid) if cid in sel else sel.append(cid)
+        if cid in sel:
+            sel.remove(cid)
+        else:
+            sel.append(cid)
         await state.update_data(pub_post=post_id, sel=sel)
         await cq.answer()
         await show_channels(app, uid, post_id, state, edit=msg)

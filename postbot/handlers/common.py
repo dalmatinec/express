@@ -45,6 +45,15 @@ async def cmd_cancel(message: Message, state: FSMContext, app: App) -> None:
     await home(app, message.from_user.id, note="Отменено.")
 
 
+@router.message(F.text == ui.CANCEL_TEXT, StateFilter("*"))
+async def text_cancel(message: Message, state: FSMContext, app: App) -> None:
+    """Отмена с нижней клавиатуры (выбор канала или человека)."""
+    await state.clear()
+    app.stop_connecting(message.from_user.id)
+    await ui.drop_input(message)
+    await home(app, message.from_user.id, note="Отменено.")
+
+
 @router.message(F.text == ui.MAIN_CREATE, StateFilter("*"))
 async def menu_create(message: Message, state: FSMContext, app: App) -> None:
     from . import editor

@@ -16,6 +16,7 @@ T = TypeVar("T")
 MAIN_CREATE = "📝 Создать пост"
 MAIN_HISTORY = "🗂 История постов"
 MAIN_ADMIN = "⚙️ Админка"
+CANCEL_TEXT = "❌ Отмена"
 
 STYLES = {None: "⚪️ Обычная", "primary": "🔵 Синяя", "success": "🟢 Зелёная", "danger": "🔴 Красная"}
 
@@ -79,39 +80,45 @@ async def drop_input(message: Message) -> None:
         pass
 
 
+async def retire(app: App, user_id: int, message_id: int | None) -> None:
+    """Убрать старый экран. Сообщение с нижней клавиатурой меню не трогаем, на нём держится клавиатура."""
+    if message_id and message_id != app.screens.get(user_id, {}).get("home"):
+        await safe_delete(app, user_id, message_id)
+
+
 async def show(app: App, user_id: int, text: str, markup: InlineKeyboardMarkup | ReplyKeyboardMarkup | None = None,
                *, edit: Message | None = None, keep_preview: bool = False) -> Message | None:
     """Показать экран. edit - нажатое сообщение: если это текущая панель, правим её на месте."""
     scr = app.screens.setdefault(user_id, {})
     panel = scr.get("panel")
     inline = markup is None or isinstance(markup, InlineKeyboardMarkup)
-    if (edit is not None and edit.message_id == panel and inline and not scr.get("reply")
+    if (edit is not None and edit.message_id == panel and panel != scr.get("home") and inline
             and edit.text is not None):
         try:
             res = await app.bot.edit_message_text(text=text, chat_id=user_id, message_id=edit.message_id,
                                                   reply_markup=markup)
             if not keep_preview:
-                await safe_delete(app, user_id, scr.pop("preview", None))
+                await retire(app, user_id, scr.pop("preview", None))
             return res if isinstance(res, Message) else None
         except TelegramBadRequest as e:
             if "not modified" in e.message:
                 if not keep_preview:
-                    await safe_delete(app, user_id, scr.pop("preview", None))
+                    await retire(app, user_id, scr.pop("preview", None))
                 return edit
             log.debug("Не вышло поправить экран: %s", e.message)
 
     msg = await app.bot.send_message(user_id, text, reply_markup=markup)
+    old_home = scr.get("home")
+    if not inline:
+        # новое сообщение с клавиатурой, старое такое же больше не нужно
+        scr["home"] = msg.message_id
+        if old_home:
+            await safe_delete(app, user_id, old_home)
     scr["panel"] = msg.message_id
-    scr["reply"] = not inline
-    await safe_delete(app, user_id, panel)
-    if edit is not None and edit.message_id not in (panel, scr.get("preview"), msg.message_id):
-        await safe_delete(app, user_id, edit.message_id)
+    if panel not in (old_home, msg.message_id):
+        await retire(app, user_id, panel)
+    if edit is not None and edit.message_id not in (panel, old_home, scr.get("preview"), msg.message_id):
+        await retire(app, user_id, edit.message_id)
     if not keep_preview:
-        await safe_delete(app, user_id, scr.pop("preview", None))
+        await retire(app, user_id, scr.pop("preview", None))
     return msg
-
-
-async def clear(app: App, user_id: int) -> None:
-    scr = app.screens.pop(user_id, {})
-    for key in ("preview", "panel"):
-        await safe_delete(app, user_id, scr.get(key))

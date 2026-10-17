@@ -128,6 +128,21 @@ class AccessTests(Base):
         replies = [m for m in self.h.tg.chat(STRANGER) if m.text and "только для администраторов" in m.text]
         self.assertEqual(len(replies), 1)
 
+    async def test_menu_keyboard_message_stays(self) -> None:
+        h = self.h
+        await h.send(OWNER, "/start")
+        home_id = h.app.screens[OWNER]["home"]
+        await h.send(OWNER, ui.MAIN_HISTORY)
+        await h.send(OWNER, ui.MAIN_ADMIN)
+        self.assertIn((OWNER, home_id), h.tg.messages)  # на нём держится нижняя клавиатура
+        self.assertEqual(len(h.tg.chat(OWNER)), 2)       # меню и текущий экран, больше ничего
+        await h.press("Каналы")
+        await h.press("Подключить")
+        self.assertNotIn((OWNER, home_id), h.tg.messages)  # клавиатуру выбора канала сменила
+        await h.send(OWNER, ui.CANCEL_TEXT)
+        self.assertIn("Отменено", h.panel().text)
+        self.assertEqual(len(h.tg.chat(OWNER)), 1)
+
     async def test_channel_connects_itself(self) -> None:
         await self.h.add_channel()
         c = await self.h.app.channel(CHAN)

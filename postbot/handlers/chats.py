@@ -32,7 +32,7 @@ async def bot_status(event: ChatMemberUpdated, app: App) -> None:
         return
     title = escape(channel.title)
 
-    if actor.id in app.connecting:
+    if app.is_connecting(actor.id):
         return  # человек сейчас подключает канал кнопкой, ему и так всё покажут
     if not present:
         if was is not None and was.is_present:

@@ -18,6 +18,9 @@ async def daily_backup(app: App) -> None:
     if local.hour < hour or app.setting("backup_day") == today:
         return
     await app.set_setting("backup_day", today)
+    # заодно чистим брошенные черновики старше двух недель
+    await app.db.execute("DELETE FROM posts WHERE is_draft = 1 AND updated_at < ?", (now() - 14 * 86400,))
+    await app.media.cleanup()
     path = await make_backup(app)
     errors = await send_backup(app, path, "Автобэкап раз в сутки.")
     for e in errors:
