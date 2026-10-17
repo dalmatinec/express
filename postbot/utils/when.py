@@ -4,11 +4,10 @@
 Время всегда по часовому поясу из .env.
 """
 import re
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta, tzinfo
 
 
-def parse_when(text: str, tz: ZoneInfo, now: datetime | None = None) -> datetime | None:
+def parse_when(text: str, tz: tzinfo, now: datetime | None = None) -> datetime | None:
     now = now or datetime.now(tz)
     raw = " ".join(text.lower().replace(",", " ").split())
 

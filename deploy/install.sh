@@ -33,7 +33,7 @@ echo "==> Ставлю зависимости, это 1-3 минуты"
 if [ ! -f .env ]; then
     read -rp "Токен бота от @BotFather: " TOKEN
     read -rp "Ваш Telegram ID (несколько через запятую): " OWNERS
-    read -rp "Часовой пояс [Asia/Almaty]: " TZN
+    read -rp "Часовой пояс, например Asia/Almaty или +5 [Asia/Almaty]: " TZN
     printf 'BOT_TOKEN=%s\nOWNER_IDS=%s\nTZ_NAME=%s\nDATA_DIR=data\nLOG_LEVEL=INFO\n' \
         "$TOKEN" "$OWNERS" "${TZN:-Asia/Almaty}" > .env
 fi
