@@ -72,6 +72,13 @@ async def main() -> None:
     logging.basicConfig(level=config.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     bot = Bot(config.bot_token, default=DefaultBotProperties(parse_mode="HTML", link_preview_is_disabled=True))
     app, dp = await setup(config, bot)
+    # если этот токен раньше работал на другом сервере через вебхук, Telegram не отдаст обновления,
+    # пока вебхук не снят. Тогда бот висит активным, но молчит
+    info = await bot.get_webhook_info()
+    if info.url:
+        log.warning("У бота был вебхук %s, снимаю", info.url)
+        await bot.delete_webhook()
+    log.info("Владельцы из .env: %s", ", ".join(map(str, sorted(config.owner_ids))))
     await bot.set_my_commands([BotCommand(command="start", description="Меню"),
                                BotCommand(command="cancel", description="Отменить текущий шаг")])
     await check_new_token(app)

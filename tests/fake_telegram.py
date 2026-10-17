@@ -8,7 +8,7 @@ from aiogram import Bot
 from aiogram.client.session.base import BaseSession
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.methods import (
-    AnswerCallbackQuery, DeleteMessage, EditMessageMedia, EditMessageReplyMarkup, EditMessageText, GetChat,
+    AnswerCallbackQuery, DeleteMessage, DeleteWebhook, GetWebhookInfo, EditMessageMedia, EditMessageReplyMarkup, EditMessageText, GetChat,
     GetChatMember, GetFile, GetMe, LeaveChat, PinChatMessage, SendAnimation, SendAudio, SendDocument,
     SendMessage, SendPhoto, SendVideo, SetMyCommands, TelegramMethod,
 )
@@ -115,6 +115,11 @@ class FakeTelegram(BaseSession):
         self.calls.append(method)
         if isinstance(method, GetMe):
             return User(id=self.bot_id, is_bot=True, first_name="Post", username=f"post{self.bot_id}_bot")
+        if isinstance(method, GetWebhookInfo):
+            from aiogram.types import WebhookInfo
+            return WebhookInfo(url="", has_custom_certificate=False, pending_update_count=0)
+        if isinstance(method, DeleteWebhook):
+            return True
         if isinstance(method, SetMyCommands):
             return True
         if isinstance(method, AnswerCallbackQuery):
