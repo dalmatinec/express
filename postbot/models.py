@@ -93,6 +93,11 @@ class Publication:
     error: str | None
     by_user: int | None
     created_at: int
+    has_media: int | None = None
+
+    @property
+    def is_dm(self) -> bool:
+        return self.channel_id > 0  # у личных чатов id положительный, у каналов и групп отрицательный
 
 
 @dataclass(slots=True)

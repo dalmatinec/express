@@ -1,4 +1,5 @@
-"""Кнопки поста: добавить, изменить, цвет, иконка, двигать стрелками. Предпросмотр сверху меняется сразу."""
+"""Кнопки поста: добавить, изменить, цвет одной кнопкой по кругу, иконка, двигать стрелками.
+Предпросмотр поста сверху меняется сразу."""
 from aiogram import F, Router
 from aiogram.exceptions import TelegramAPIError
 from aiogram.fsm.context import FSMContext
@@ -65,18 +66,45 @@ def grid_rows(buttons: list[PostButton], make_cb, selected: int | None = None) -
     return rows
 
 
-async def show_list(app: App, uid: int, post_id: int, edit: Message | None = None, note: str = "") -> None:
+def color_name(style: str | None) -> str:
+    return ui.STYLES.get(style, ui.STYLES[None]).split(" ", 1)[1].lower()
+
+
+def next_style(style: str | None) -> str | None:
+    """Одна кнопка цвета: каждое нажатие - следующий цвет по кругу."""
+    order = list(ui.STYLES)
+    i = order.index(style) if style in order else 0
+    return order[(i + 1) % len(order)]
+
+
+async def show_list(app: App, uid: int, post_id: int, edit: Message | None = None, note: str = "",
+                    sel: int | None = None) -> None:
+    """Кнопки поста как в самом посте. Нажали на кнопку - она выбрана, появились стрелки."""
     buttons = await P.get_buttons(app, post_id)
-    rows = grid_rows(buttons, lambda btn: f"k:{post_id}:card:{btn.id}")
-    rows.append([ui.b("➕ Добавить кнопку", f"k:{post_id}:add", "success"), ui.b("📋 Списком", f"k:{post_id}:bulk")])
-    if len(buttons) > 1:
-        rows.append([ui.b("↕️ Двигать кнопки", f"k:{post_id}:mv:{buttons[0].id}")])
-    rows.append([ui.b("🔙 К посту", f"e:{post_id}:v")])
-    if buttons:
-        text = ("🔘 Кнопки поста\n\nОни стоят ровно так, как будут в посте. Нажмите на кнопку, чтобы поменять "
-                "текст, ссылку, цвет, иконку или удалить.")
+    if sel and not any(x.id == sel for x in buttons):
+        sel = None
+    rows = grid_rows(buttons, lambda btn: f"k:{post_id}:sel:{btn.id}", sel)
+    if sel:
+        chosen = next(x for x in buttons if x.id == sel)
+        rows.append([ui.b("⬅️", f"k:{post_id}:md:{sel}:left"), ui.b("⬆️", f"k:{post_id}:md:{sel}:up"),
+                     ui.b("⬇️", f"k:{post_id}:md:{sel}:down"), ui.b("➡️", f"k:{post_id}:md:{sel}:right")])
+        rows.append([ui.b("↕️ Отдельно", f"k:{post_id}:md:{sel}:solo"),
+                     ui.b(f"🎨 Цвет: {color_name(chosen.style)}", f"k:{post_id}:col:{sel}:l", chosen.style)])
+        rows.append([ui.b("✏️ Текст, ссылка, иконка", f"k:{post_id}:card:{sel}"),
+                     ui.b("🗑 Удалить", f"k:{post_id}:del:{sel}", "danger")])
+        rows.append([ui.b("✅ Готово", f"k:{post_id}:list", "success")])
+        text = (f"🔘 Выбрана: {h(label_of(chosen))}\n\n"
+                "Стрелки двигают её, предпросмотр сверху меняется сразу. В ряду до трёх кнопок.\n"
+                "Нажмите другую кнопку, чтобы выбрать её.")
     else:
-        text = "🔘 Кнопок пока нет.\n\nДобавьте по одной или сразу списком."
+        rows.append([ui.b("➕ Добавить кнопку", f"k:{post_id}:add", "success"),
+                     ui.b("📋 Списком", f"k:{post_id}:bulk")])
+        rows.append([ui.b("🔙 К посту", f"e:{post_id}:v")])
+        if buttons:
+            text = ("🔘 Кнопки поста\n\nОни стоят ровно так, как будут в посте. Нажмите на кнопку, чтобы выбрать её: "
+                    "появятся стрелки, цвет и всё остальное.")
+        else:
+            text = "🔘 Кнопок пока нет.\n\nДобавьте по одной или сразу списком."
     if note:
         text = f"{note}\n\n{text}"
     await render(app, uid, post_id, text, ui.kb(rows), edit=edit)
@@ -85,40 +113,23 @@ async def show_list(app: App, uid: int, post_id: int, edit: Message | None = Non
 async def show_card(app: App, uid: int, btn: PostButton, edit: Message | None = None, note: str = "") -> None:
     pid, bid = btn.post_id, btn.id
     value = h(btn.value) if btn.kind != "url" else f'<a href="{h(btn.value)}">{h(short(btn.value, 60))}</a>'
-    icon = f"{emoji_html(btn.icon)} есть" if btn.icon else "нет"
     text = (f"🔘 Кнопка: {h(label_of(btn))}\n\n"
             f"Что делает: {KINDS.get(btn.kind, btn.kind)}\n"
             f"{VALUE_NAMES.get(btn.kind, 'Значение')}: {value}\n"
-            f"Цвет: {ui.STYLES.get(btn.style, 'обычная')}\n"
-            f"Иконка: {icon}")
+            f"Цвет: {color_name(btn.style)}\n"
+            f"Премиум-иконка: {'есть' if btn.icon else 'нет'}\n\n"
+            "Как выглядит 👇")
     if note:
         text = f"{note}\n\n{text}"
-    colors = [ui.b(("✅ " if btn.style == style else "") + name.split(" ", 1)[1], f"k:{pid}:col:{bid}:{style or '0'}",
-                   style) for style, name in ui.STYLES.items()]
     rows = [
+        [ui.b(btn.label, "noop", btn.style, btn.icon)],
         [ui.b("✏️ Текст", f"k:{pid}:lbl:{bid}"), ui.b(VALUE_NAMES[btn.kind], f"k:{pid}:val:{bid}")],
-        colors[:2], colors[2:],
-        [ui.b("✨ Иконка", f"k:{pid}:ico:{bid}")] + ([ui.b("🚫 Без иконки", f"k:{pid}:icodel:{bid}")] if btn.icon else []),
-        [ui.b("↕️ Двигать", f"k:{pid}:mv:{bid}"), ui.b("🗑 Удалить", f"k:{pid}:del:{bid}", "danger")],
-        [ui.b("🔙 Ко всем кнопкам", f"k:{pid}:list")],
+        [ui.b("😀 Иконка", f"k:{pid}:ico:{bid}"), ui.b("🎨 Цвет", f"k:{pid}:col:{bid}:c")],
     ]
+    if btn.icon:
+        rows.append([ui.b("🚫 Убрать иконку", f"k:{pid}:icodel:{bid}")])
+    rows.append([ui.b("🔙 Назад", f"k:{pid}:sel:{bid}")])
     await render(app, uid, pid, text, ui.kb(rows), edit=edit)
-
-
-async def show_move(app: App, uid: int, post_id: int, selected: int, edit: Message | None = None) -> None:
-    buttons = await P.get_buttons(app, post_id)
-    sel = next((x for x in buttons if x.id == selected), None)
-    if sel is None:
-        await show_list(app, uid, post_id, edit=edit)
-        return
-    rows = grid_rows(buttons, lambda btn: f"k:{post_id}:mv:{btn.id}", selected)
-    rows.append([ui.b("⬅️", f"k:{post_id}:md:{selected}:left"), ui.b("⬆️", f"k:{post_id}:md:{selected}:up"),
-                 ui.b("⬇️", f"k:{post_id}:md:{selected}:down"), ui.b("➡️", f"k:{post_id}:md:{selected}:right")])
-    rows.append([ui.b("✅ Готово", f"k:{post_id}:list", "success")])
-    text = (f"↕️ Двигаем: {h(label_of(sel))}\n\n"
-            "Одно нажатие стрелки - один шаг. ⬆️ сначала ставит кнопку отдельным рядом, ещё раз ⬆️ - в ряд выше. "
-            "⬅️ ➡️ двигают внутри ряда.\nНажмите другую кнопку, чтобы двигать её.")
-    await render(app, uid, post_id, text, ui.kb(rows), edit=edit)
 
 
 async def _ask(app: App, uid: int, text: str, back: str, extra: list | None = None) -> None:
@@ -134,8 +145,8 @@ async def buttons_cb(cq: CallbackQuery, state: FSMContext, app: App) -> None:
     bid = int(p[3]) if len(p) > 3 and p[3].isdigit() else 0
     uid, msg = cq.from_user.id, clicked(cq)
     post = await P.get_post(app, pid)
-    if post is None or not post.is_draft:
-        await cq.answer("Этот пост уже не редактируется", show_alert=True)
+    if post is None:
+        await cq.answer("Пост уже удалён", show_alert=True)
         await open_editor(app, uid, pid, edit=msg)
         return
     btn = await P.get_button(app, bid) if bid else None
@@ -178,15 +189,19 @@ async def buttons_cb(cq: CallbackQuery, state: FSMContext, app: App) -> None:
         await cq.answer()
         await show_card(app, uid, btn, edit=msg)
 
+    elif action in ("sel", "mv"):
+        await cq.answer()
+        await show_list(app, uid, pid, edit=msg, sel=bid)
+
     elif action == "col":
-        style = None if p[4] == "0" else p[4]
-        if style not in ui.STYLES:
-            await cq.answer()
-            return
+        style = next_style(btn.style)
         await P.update_button(app, bid, style=style)
-        await cq.answer(ui.STYLES[style])
+        await cq.answer(f"Цвет: {color_name(style)}")
         await refresh_preview(app, uid, pid)
-        await show_card(app, uid, await P.get_button(app, bid), edit=msg)
+        if len(p) > 4 and p[4] == "c":
+            await show_card(app, uid, await P.get_button(app, bid), edit=msg)
+        else:
+            await show_list(app, uid, pid, edit=msg, sel=bid)
 
     elif action == "lbl":
         await cq.answer()
@@ -220,13 +235,8 @@ async def buttons_cb(cq: CallbackQuery, state: FSMContext, app: App) -> None:
         await refresh_preview(app, uid, pid)
         await show_list(app, uid, pid, edit=msg)
 
-    elif action == "mv":
-        await cq.answer()
-        await show_move(app, uid, pid, bid, edit=msg)
-
     elif action == "md":
-        buttons = await P.get_buttons(app, pid)
-        grid = grid_of(buttons)
+        grid = grid_of(await P.get_buttons(app, pid))
         new = move(grid, bid, p[4])
         if new == grid:
             await cq.answer("Дальше некуда")
@@ -234,7 +244,7 @@ async def buttons_cb(cq: CallbackQuery, state: FSMContext, app: App) -> None:
         await P.save_grid(app, new)
         await cq.answer()
         await refresh_preview(app, uid, pid)
-        await show_move(app, uid, pid, bid, edit=msg)
+        await show_list(app, uid, pid, edit=msg, sel=bid)
     else:
         await cq.answer()
 
@@ -289,7 +299,7 @@ async def got_value(message: Message, state: FSMContext, app: App) -> None:
     bid = await P.add_button(app, pid, kind, data.get("label", ""), data.get("icon"), value)
     await state.clear()
     await refresh_preview(app, uid, pid)
-    await show_card(app, uid, await P.get_button(app, bid), note="✅ Кнопка добавлена. Можно выбрать цвет.")
+    await show_list(app, uid, pid, note="✅ Кнопка добавлена. Цвет и место можно поменять здесь.", sel=bid)
 
 
 @router.message(Btn.bulk)

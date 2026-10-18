@@ -52,6 +52,17 @@ async def _call(coro_factory, tries: int = 3):
             await asyncio.sleep(min(e.retry_after, 60) + 1)
 
 
+DM_TITLE = "📥 Личка"
+
+
+async def target_of(app: App, chat_id: int) -> tuple[Channel | None, str]:
+    """Канал и его название. Положительный id - это личка с ботом."""
+    if chat_id > 0:
+        return None, DM_TITLE
+    channel = await app.channel(chat_id)
+    return channel, channel.title if channel else str(chat_id)
+
+
 async def publish(app: App, post_id: int, channel_ids: list[int], by_user: int,
                   pub_ids: dict[int, int] | None = None) -> list[Result]:
     """Сразу публикует. pub_ids - уже созданные отложенные записи {канал: id записи}."""
@@ -60,15 +71,17 @@ async def publish(app: App, post_id: int, channel_ids: list[int], by_user: int,
         return [Result(cid, str(cid), False, "пост удалён") for cid in channel_ids]
     buttons = await P.get_buttons(app, post_id)
     results: list[Result] = []
+    has_media = int(post.media_id is not None)
     for cid in channel_ids:
-        channel = await app.channel(cid)
-        title = channel.title if channel else str(cid)
+        channel, title = await target_of(app, cid)
+        is_dm = cid > 0
         pub_id = (pub_ids or {}).get(cid)
         try:
-            msg = await _call(lambda: send_post(app, cid, post, buttons))
+            # в личку без запрета пересылки: оттуда пост удобно переслать самому
+            msg = await _call(lambda: send_post(app, cid, post, buttons, preview=is_dm))
         except (TelegramAPIError, RenderError) as e:
             err = human_error(e)
-            if isinstance(e, TelegramAPIError):
+            if isinstance(e, TelegramAPIError) and not is_dm:
                 await channel_rights(app, cid)  # может, права забрали, обновим отметку в списке
             if pub_id:
                 await app.db.execute("UPDATE publications SET status = 'failed', error = ? WHERE id = ?",
@@ -83,15 +96,15 @@ async def publish(app: App, post_id: int, channel_ids: list[int], by_user: int,
         delete_at = ts + post.delete_after * 60 if post.delete_after else None
         if pub_id:
             await app.db.execute(
-                "UPDATE publications SET status = 'sent', message_id = ?, sent_at = ?, delete_at = ?, error = NULL "
-                "WHERE id = ?", (msg.message_id, ts, delete_at, pub_id))
+                "UPDATE publications SET status = 'sent', message_id = ?, sent_at = ?, delete_at = ?, error = NULL, "
+                "has_media = ? WHERE id = ?", (msg.message_id, ts, delete_at, has_media, pub_id))
         else:
             await app.db.execute(
                 "INSERT INTO publications(post_id, channel_id, message_id, status, sent_at, delete_at, by_user, "
-                "created_at) VALUES (?, ?, ?, 'sent', ?, ?, ?, ?)",
-                (post_id, cid, msg.message_id, ts, delete_at, by_user, ts))
+                "created_at, has_media) VALUES (?, ?, ?, 'sent', ?, ?, ?, ?, ?)",
+                (post_id, cid, msg.message_id, ts, delete_at, by_user, ts, has_media))
         info = (channel.post_link(msg.message_id) if channel else None) or "отправлено"
-        if post.pin:
+        if post.pin and not is_dm:
             try:
                 await app.bot.pin_chat_message(cid, msg.message_id, disable_notification=bool(post.silent))
             except TelegramAPIError as e:
@@ -118,13 +131,17 @@ async def update_everywhere(app: App, post_id: int, old_has_media: bool | None =
     post = await P.get_post(app, post_id)
     assert post is not None
     buttons = await P.get_buttons(app, post_id)
-    old = post.media_id is not None if old_has_media is None else old_has_media
+    now_media = int(post.media_id is not None)
     results: list[Result] = []
     for pub in await P.publications(app, post_id, "sent"):
-        channel = await app.channel(pub.channel_id)
-        title = channel.title if channel else str(pub.channel_id)
+        channel, title = await target_of(app, pub.channel_id)
+        if pub.has_media is not None:
+            old = bool(pub.has_media)
+        else:
+            old = bool(now_media) if old_has_media is None else old_has_media
         try:
             await _call(lambda: edit_post(app, pub.channel_id, pub.message_id or 0, post, buttons, old))
+            await app.db.execute("UPDATE publications SET has_media = ? WHERE id = ?", (now_media, pub.id))
             link = channel.post_link(pub.message_id or 0) if channel else None
             results.append(Result(pub.channel_id, title, True, link or "изменено"))
         except (TelegramAPIError, RenderError) as e:
@@ -140,8 +157,7 @@ async def delete_everywhere(app: App, post_id: int) -> list[Result]:
 
 
 async def delete_one(app: App, pub: Publication) -> Result:
-    channel = await app.channel(pub.channel_id)
-    title = channel.title if channel else str(pub.channel_id)
+    _, title = await target_of(app, pub.channel_id)
     try:
         await _call(lambda: app.bot.delete_message(pub.channel_id, pub.message_id or 0))
         await app.db.execute("UPDATE publications SET status = 'deleted', delete_at = NULL WHERE id = ?", (pub.id,))

@@ -1,14 +1,15 @@
-"""Расстановка кнопок по рядам. Одно нажатие стрелки - один шаг.
+"""Расстановка кнопок по рядам, как в satpaev. Одно нажатие стрелки - один шаг.
 
 ⬅️ ➡️ меняют кнопку местами с соседом в ряду.
-⬆️ если в ряду есть ещё кнопки, кнопка уходит в свой ряд над ним,
-   если она уже одна в ряду, то встаёт в конец ряда выше.
+⬆️ если в ряду выше меньше трёх кнопок, кнопка встаёт туда последней.
+   Если там уже три, а в её ряду есть ещё кнопки, она уходит отдельным рядом над своим.
+   Если она и так одна в ряду, она меняется местами с рядом выше.
 ⬇️ то же самое вниз, в ряду ниже она встаёт первой.
-Пример: 2-2-2, жмём ⬆️ на последней: 2-2-1-1, ещё раз ⬆️: 2-3-1.
+↕️ Отдельно - вынести кнопку из ряда в свой ряд ниже.
 """
 from typing import Iterable
 
-MAX_PER_ROW = 8  # больше Telegram в один ряд не ставит
+ROW_MAX = 3  # стрелками в один ряд собирается не больше трёх кнопок
 
 Grid = list[list[int]]
 
@@ -25,32 +26,49 @@ def grid_of(items: Iterable) -> Grid:
     return grid
 
 
+def _find(grid: Grid, item_id: int) -> tuple[int, int]:
+    for r, row in enumerate(grid):
+        if item_id in row:
+            return r, row.index(item_id)
+    return -1, -1
+
+
 def move(grid: Grid, item_id: int, direction: str) -> Grid:
     grid = [list(r) for r in grid if r]
-    pos = next(((r, row.index(item_id)) for r, row in enumerate(grid) if item_id in row), None)
-    if pos is None:
+    r, c = _find(grid, item_id)
+    if r < 0:
         return grid
-    r, c = pos
     row = grid[r]
-    if direction in ("left", "right"):
-        j = c - 1 if direction == "left" else c + 1
-        if 0 <= j < len(row):
-            row[c], row[j] = row[j], row[c]
+    if direction == "left" and c > 0:
+        row[c - 1], row[c] = row[c], row[c - 1]
+    elif direction == "right" and c < len(row) - 1:
+        row[c + 1], row[c] = row[c], row[c + 1]
     elif direction == "up":
-        if len(row) > 1:
-            row.pop(c)
-            grid.insert(r, [item_id])
-        elif r > 0 and len(grid[r - 1]) < MAX_PER_ROW:
+        if r == 0 and len(row) == 1:
+            return grid  # и так в самом верху
+        row.pop(c)
+        alone = not row
+        if r > 0 and len(grid[r - 1]) < ROW_MAX:
             grid[r - 1].append(item_id)
-            grid.pop(r)
+        elif not alone:
+            grid.insert(r, [item_id])
+        else:
+            grid.insert(r - 1, [item_id])
     elif direction == "down":
-        if len(row) > 1:
-            row.pop(c)
-            grid.insert(r + 1, [item_id])
-        elif r < len(grid) - 1 and len(grid[r + 1]) < MAX_PER_ROW:
+        if r == len(grid) - 1 and len(row) == 1:
+            return grid  # и так в самом низу
+        row.pop(c)
+        alone = not row
+        if r + 1 < len(grid) and len(grid[r + 1]) < ROW_MAX:
             grid[r + 1].insert(0, item_id)
-            grid.pop(r)
-    return grid
+        elif not alone:
+            grid.insert(r + 1, [item_id])
+        else:
+            grid.insert(r + 2, [item_id])
+    elif direction == "solo" and len(row) > 1:
+        row.pop(c)
+        grid.insert(r + 1, [item_id])
+    return [x for x in grid if x]
 
 
 def rows_of(grid: Grid) -> list[tuple[int, int, int]]:

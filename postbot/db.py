@@ -134,6 +134,10 @@ MIGRATIONS: list[str] = [
     CREATE INDEX ix_pub_sending ON publications(id) WHERE status = 'sending';
     ANALYZE;
     """,
+    # 3: было ли медиа в сообщении, когда пост вышел (чтобы правка знала, можно ли поменять текст на медиа)
+    """
+    ALTER TABLE publications ADD COLUMN has_media INTEGER;
+    """,
 ]
 
 

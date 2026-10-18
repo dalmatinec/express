@@ -173,7 +173,8 @@ class EditorTests(Base):
         # двигаем Сайт: вверх - встаёт в ряд выше
         btns = await P.get_buttons(h.app, pid)
         site = next(b for b in btns if b.label == "Сайт")
-        await h.click(f"k:{pid}:mv:{site.id}")
+        await h.click(f"k:{pid}:sel:{site.id}")
+        self.assertIn("Выбрана: Сайт", h.panel().text)
         await h.click(f"k:{pid}:md:{site.id}:up")
         self.assertEqual([[b.text for b in r] for r in h.buttons(h.preview())], [["Канал", "Чат", "Сайт"]])
         # ещё раз вверх из ряда из трёх: встаёт отдельным рядом выше
@@ -181,10 +182,20 @@ class EditorTests(Base):
         self.assertEqual([[b.text for b in r] for r in h.buttons(h.preview())], [["Сайт"], ["Канал", "Чат"]])
         await h.click(f"k:{pid}:md:{site.id}:left")  # некуда
         self.assertEqual([[b.text for b in r] for r in h.buttons(h.preview())], [["Сайт"], ["Канал", "Чат"]])
+        # Отдельно: Канал уходит своим рядом ниже, потом Сайт вниз встаёт в ряд к Чату
+        kanal = next(b for b in btns if b.label == "Канал")
+        await h.click(f"k:{pid}:md:{kanal.id}:solo")
+        self.assertEqual([[b.text for b in r] for r in h.buttons(h.preview())], [["Сайт"], ["Чат"], ["Канал"]])
+        await h.click(f"k:{pid}:md:{site.id}:down")
+        self.assertEqual([[b.text for b in r] for r in h.buttons(h.preview())], [["Сайт", "Чат"], ["Канал"]])
 
-        # цвет
-        await h.click(f"k:{pid}:col:{site.id}:success")
+        # цвет: одна кнопка, каждое нажатие следующий цвет
+        await h.click(f"k:{pid}:col:{site.id}:l")
+        self.assertEqual(h.buttons(h.preview())[0][0].style, "primary")
+        await h.click(f"k:{pid}:col:{site.id}:l")
         self.assertEqual(h.buttons(h.preview())[0][0].style, "success")
+        color_btn = [b.text for r in h.buttons(h.panel()) for b in r if "Цвет" in b.text][0]
+        self.assertEqual(color_btn, "🎨 Цвет: зелёная")
 
         # новая кнопка-всплывашка с премиум-иконкой
         await h.click(f"k:{pid}:add")
@@ -259,17 +270,17 @@ class PublishTests(Base):
         post = await P.get_post(h.app, pid)
         self.assertEqual((post.is_draft, post.title), (0, "Мой первый"))
 
-        # правка и обновление в канале
-        await h.press("Изменить и опубликовать")
-        draft_id = h.app.screens[OWNER]["preview_post"]
-        self.assertNotEqual(draft_id, pid)
-        await h.click(f"e:{draft_id}:text")
+        # правка готового поста прямо в нём, без копии
+        await h.press("Изменить")
+        self.assertEqual(h.app.screens[OWNER]["preview_post"], pid)
+        await h.click(f"e:{pid}:text")
         await h.send(OWNER, "Исправленный пост")
-        await h.press("Сохранить и обновить")
+        self.assertEqual((await P.get_post(h.app, pid)).html, "Исправленный пост")  # сохранилось сразу
+        self.assertEqual(h.tg.chat(CHAN)[0].text, "Первый пост")  # в канале пока старый
+        await h.press("Обновить там")
         self.assertEqual(h.tg.chat(CHAN)[0].text, "Исправленный пост")
-        self.assertIsNone(await P.get_post(h.app, draft_id))
-        self.assertEqual((await P.get_post(h.app, pid)).html, "Исправленный пост")
-        self.assertIn("Обновлено в каналах: 1 из 1", h.panel().text)
+        self.assertIn("Обновлено: 1 из 1", h.panel().text)
+        self.assertEqual(len(await P.list_posts(h.app)), 1)
 
         # история
         await h.send(OWNER, ui.MAIN_HISTORY)
@@ -279,14 +290,37 @@ class PublishTests(Base):
         await h.send(OWNER, "Новое имя")
         self.assertIn("Новое имя", h.panel().text)
 
-        # удалить из каналов
-        await h.press("Удалить из каналов")
+        # удалить отовсюду
+        await h.press("Удалить везде")
         await h.press("Да, удалить")
         self.assertEqual(h.tg.chat(CHAN), [])
 
         await h.press("Удалить из истории")
         await h.press("Да, удалить")
         self.assertIsNone(await P.get_post(h.app, pid))
+
+    async def test_publish_to_dm_and_change_media(self) -> None:
+        h = self.h
+        pid = await h.new_post("Себе")
+        await h.click(f"e:{pid}:pub")
+        await h.click(f"e:{pid}:notitle:pub")
+        await h.press("Себе в личку")
+        await h.press("Опубликовать сейчас")
+        self.assertIn("Опубликовано: 1 из 1", h.panel().text)
+        self.assertIn("Личка", h.panel().text)
+        dm = [m for m in h.tg.chat(OWNER) if m.text == "Себе"]
+        self.assertEqual(len(dm), 1)  # пост остался в личке, его не убрали вместе со старым экраном
+        self.assertEqual(h.tg.chat(CHAN), [])
+
+        # меняем текст на фото: старое сообщение было текстом, Telegram так не правит, бот это объясняет
+        await h.press("Изменить")
+        await h.click(f"e:{pid}:media")
+        photo = [{"file_id": "ph9", "file_unique_id": "ph9", "width": 1, "height": 1, "file_size": 10}]
+        await h.send(OWNER, None, photo=photo)
+        self.assertEqual(h.preview().kind, "photo")
+        await h.press("Обновить там")
+        self.assertIn("Обновлено: 0 из 1", h.panel().text)
+        self.assertIn("с текста на медиа", h.panel().text)
 
     async def test_no_rights_channel_is_reported(self) -> None:
         h = self.h

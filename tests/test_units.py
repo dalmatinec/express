@@ -20,18 +20,27 @@ def msg(text: str, entities: list | None = None) -> Message:
 
 
 class LayoutTests(unittest.TestCase):
-    def test_up_twice_like_described(self) -> None:
-        grid = [[1, 2], [3, 4], [5, 6]]
-        grid = move(grid, 6, "up")
-        self.assertEqual(grid, [[1, 2], [3, 4], [6], [5]])
-        grid = move(grid, 6, "up")
-        self.assertEqual(grid, [[1, 2], [3, 4, 6], [5]])
+    def test_up_joins_row_above_up_to_three(self) -> None:
+        grid = [[1, 2], [3]]
+        grid = move(grid, 3, "up")
+        self.assertEqual(grid, [[1, 2, 3]])
+        grid = move(grid, 3, "up")  # в самом верхнем ряду: отдельным рядом выше
+        self.assertEqual(grid, [[3], [1, 2]])
+        self.assertEqual(move(grid, 3, "up"), [[3], [1, 2]])  # выше некуда
 
-    def test_down_and_sides(self) -> None:
-        self.assertEqual(move([[1, 2]], 1, "down"), [[2], [1]])
+    def test_full_row_above(self) -> None:
+        grid = [[1, 2, 3], [4, 5]]
+        self.assertEqual(move(grid, 5, "up"), [[1, 2, 3], [5], [4]])
+        self.assertEqual(move([[1, 2, 3], [4]], 4, "up"), [[4], [1, 2, 3]])  # одна в ряду: меняются рядами
+
+    def test_down_sides_solo(self) -> None:
         self.assertEqual(move([[1], [2, 3]], 1, "down"), [[1, 2, 3]])
+        self.assertEqual(move([[1, 2]], 1, "down"), [[2], [1]])
+        self.assertEqual(move([[1], [2, 3, 4]], 1, "down"), [[2, 3, 4], [1]])
         self.assertEqual(move([[1, 2, 3]], 3, "left"), [[1, 3, 2]])
         self.assertEqual(move([[1, 2]], 2, "right"), [[1, 2]])
+        self.assertEqual(move([[1, 2, 3]], 1, "solo"), [[2, 3], [1]])
+        self.assertEqual(move([[1]], 1, "solo"), [[1]])
 
     def test_grid_of(self) -> None:
         @dataclass

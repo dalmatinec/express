@@ -18,50 +18,44 @@ router = Router(name="publish")
 router.message.filter(F.chat.type == "private")
 
 
-def _back(post_is_draft: bool, post_id: int) -> str:
-    return f"e:{post_id}:v" if post_is_draft else f"h:{post_id}:card"
-
-
 async def show_channels(app: App, uid: int, post_id: int, state: FSMContext, edit: Message | None = None,
                         note: str = "") -> None:
+    """Куда публиковать: себе в личку, в каналы, в группы. Можно куда угодно, по желанию."""
     post = await P.get_post(app, post_id)
     if post is None:
         await home(app, uid, note="Пост не найден.")
         return
     keep = app.screens.get(uid, {}).get("preview_post") == post_id
     channels = await app.channels_for(uid)
-    back = _back(bool(post.is_draft), post_id)
-    if not channels:
-        rows = []
-        if app.can_manage_channels(uid):
-            rows.append([ui.b("➕ Подключить канал", "a:chadd", "success")])
-        rows.append([ui.b("🔙 Назад", back)])
-        await ui.show(app, uid, "📢 Каналов пока нет.\n\nДобавьте бота админом в канал с правом публиковать "
-                                "сообщения, он подключится сам.", ui.kb(rows), edit=edit, keep_preview=keep)
-        return
+    back = f"e:{post_id}:v" if keep or post.is_draft else f"h:{post_id}:card"
 
     data = await state.get_data()
     ok_ids = [c.id for c in channels if c.ok]
+    allowed = set(ok_ids) | {uid}
     if data.get("pub_post") != post_id:
         sel = ok_ids[:1] if len(ok_ids) == 1 else []
         await state.update_data(pub_post=post_id, sel=sel)
     else:
-        sel = [cid for cid in data.get("sel", []) if cid in ok_ids]
+        sel = [cid for cid in data.get("sel", []) if cid in allowed]
 
-    rows = []
+    rows = [[ui.b(f"{ui.mark(uid in sel)} 📥 Себе в личку", f"p:{post_id}:t:{uid}")]]
     for c in channels:
+        icon = "📢" if c.type == "channel" else "👥"
         if c.ok:
-            rows.append([ui.b(f"{ui.mark(c.id in sel)} {c.title}", f"p:{post_id}:t:{c.id}")])
+            rows.append([ui.b(f"{ui.mark(c.id in sel)} {icon} {c.title}", f"p:{post_id}:t:{c.id}")])
         else:
             rows.append([ui.b(f"⚠️ {c.title}", f"p:{post_id}:bad:{c.id}")])
     if len(ok_ids) > 1:
         all_on = set(ok_ids) <= set(sel)
-        rows.append([ui.b("Снять все" if all_on else "Выбрать все", f"p:{post_id}:all")])
+        rows.append([ui.b("Снять все каналы" if all_on else "Выбрать все каналы", f"p:{post_id}:all")])
+    if not channels and app.can_manage_channels(uid):
+        rows.append([ui.b("➕ Подключить канал или группу", "a:chadd")])
     rows.append([ui.b("🚀 Опубликовать сейчас", f"p:{post_id}:now", "success"),
                  ui.b("⏰ По времени", f"p:{post_id}:time")])
     rows.append([ui.b("🔙 Назад", back)])
     text = (f"📤 Куда публикуем пост #{post.source_id or post.id} · {escape(post.name)}?\n\n"
-            "Отметьте каналы и нажмите Опубликовать.")
+            "Отметьте, куда нужно: себе в личку, в каналы, в группы. Можно одно, можно сразу несколько.\n"
+            "📥 В личке пост будет со всеми премиум-эмодзи и кнопками.")
     if any(not c.ok for c in channels):
         text += "\n⚠️ - там у бота нет права публиковать, нажмите, чтобы узнать подробнее."
     if note:
@@ -78,7 +72,7 @@ async def _finish(app: App, uid: int, post_id: int) -> int:
 
 async def _selected(app: App, uid: int, state: FSMContext) -> list[int]:
     data = await state.get_data()
-    allowed = {c.id for c in await app.channels_for(uid) if c.ok}
+    allowed = {c.id for c in await app.channels_for(uid) if c.ok} | {uid}
     return [cid for cid in data.get("sel", []) if cid in allowed]
 
 
@@ -91,12 +85,15 @@ def time_prompt(app: App) -> str:
 async def _schedule(app: App, uid: int, post_id: int, state: FSMContext, when: datetime) -> None:
     sel = await _selected(app, uid, state)
     if not sel:
-        await show_channels(app, uid, post_id, state, note="⚠️ Отметьте хотя бы один канал.")
+        await show_channels(app, uid, post_id, state, note="⚠️ Отметьте, куда публиковать.")
         return
     final_id = await _finish(app, uid, post_id)
     await schedule(app, final_id, sel, int(when.timestamp()), uid)
     await state.clear()
-    names = ", ".join(escape(c.title) for c in await app.all_channels() if c.id in sel)
+    names = [escape(c.title) for c in await app.all_channels() if c.id in sel]
+    if uid in sel:
+        names.insert(0, "личка")
+    names = ", ".join(names)
     from . import history
     await history.show_card(app, uid, final_id,
                             note=f"⏰ Запланировано на {app.fmt(int(when.timestamp()))}: {names}")
@@ -148,18 +145,20 @@ async def publish_cb(cq: CallbackQuery, state: FSMContext, app: App) -> None:
     elif action == "now":
         sel = await _selected(app, uid, state)
         if not sel:
-            await cq.answer("Отметьте хотя бы один канал", show_alert=True)
+            await cq.answer("Отметьте, куда публиковать", show_alert=True)
             return
         await cq.answer("Публикую...")
         final_id = await _finish(app, uid, post_id)
         results = await publish(app, final_id, sel, uid)
         await state.clear()
         from . import history
-        await history.show_card(app, uid, final_id, note="📤 " + results_text(results), edit=msg)
+        # если пост ушёл в личку, карточку шлём ниже него, а не правим старую выше
+        await history.show_card(app, uid, final_id, note="📤 " + results_text(results),
+                                edit=None if uid in sel else msg)
 
     elif action == "time":
         if not await _selected(app, uid, state):
-            await cq.answer("Сначала отметьте каналы", show_alert=True)
+            await cq.answer("Сначала отметьте, куда публиковать", show_alert=True)
             return
         await cq.answer()
         await state.set_state(Pub.time)

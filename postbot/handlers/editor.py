@@ -100,17 +100,19 @@ async def render(app: App, user_id: int, post_id: int, text: str, markup: Inline
 async def open_editor(app: App, user_id: int, post_id: int, *, edit: Message | None = None,
                       refresh: bool = True, note: str = "") -> None:
     post = await P.get_post(app, post_id)
-    if post is None or not post.is_draft:
-        from . import history
-        if post is not None:
-            await history.show_card(app, user_id, post_id, edit=edit)
-        else:
-            await home(app, user_id, note="Этот пост уже удалён.")
+    if post is None:
+        await home(app, user_id, note="Этот пост уже удалён.")
         return
     buttons = await P.get_buttons(app, post_id)
     media = await app.media.get(post.media_id)
+    saved = not post.is_draft
     editing = post.source_id is not None
-    head = f"✏️ Правка поста #{post.source_id}" if editing else f"📝 Новый пост #{post.id}"
+    if saved:
+        head = f"✏️ Пост #{post.id} · {h(post.name)}\nМеняйте что нужно, всё сохраняется сразу."
+    elif editing:
+        head = f"✏️ Правка поста #{post.source_id}"
+    else:
+        head = f"📝 Новый пост #{post.id}"
     text = (f"{head}\n\n"
             f"🏷 Название: {h(post.title) or 'не задано'}\n"
             f"🖼 Медиа: {KIND_NAMES[media.kind] if media else 'нет'}\n"
@@ -126,6 +128,13 @@ async def open_editor(app: App, user_id: int, post_id: int, *, edit: Message | N
         [ui.b("🏷 Название", f"e:{pid}:title")],
         [ui.b("📤 Опубликовать", f"e:{pid}:pub", "success")],
     ]
+    if saved:
+        live = await P.publications(app, pid, "sent")
+        if live:
+            rows.append([ui.b(f"🔄 Обновить там, где он уже вышел ({len(live)})", f"e:{pid}:upd", "primary")])
+        rows.append([ui.b("🔙 К посту", f"h:{pid}:card")])
+        await render(app, user_id, pid, text, ui.kb(rows), edit=edit, refresh=refresh)
+        return
     if editing:
         live = await P.publications(app, post.source_id, "sent")
         if live:
@@ -229,10 +238,6 @@ async def editor_cb(cq: CallbackQuery, state: FSMContext, app: App) -> None:
         await cq.answer("Пост не найден, возможно его уже удалили", show_alert=True)
         await home(app, uid)
         return
-    if not post.is_draft:
-        await cq.answer()
-        await open_editor(app, uid, post_id, edit=msg)
-        return
     await state.clear()
     media = await app.media.get(post.media_id)
 
@@ -285,6 +290,11 @@ async def editor_cb(cq: CallbackQuery, state: FSMContext, app: App) -> None:
             return
         await _after_title(app, uid, state, post_id, action, msg)
 
+    elif action == "cx" and not post.is_draft:
+        await cq.answer()
+        from . import history
+        await history.show_card(app, uid, post_id, edit=msg)
+
     elif action == "cx":
         await cq.answer()
         what = "Изменения не сохранятся." if post.source_id else "Пост удалится."
@@ -292,7 +302,7 @@ async def editor_cb(cq: CallbackQuery, state: FSMContext, app: App) -> None:
                       ui.kb([[ui.b("🗑 Да, выйти", f"e:{post_id}:cxy", "danger")],
                              [ui.b("🔙 Нет, вернуться", f"e:{post_id}:v")]]), edit=msg, keep_preview=True)
 
-    elif action == "cxy":
+    elif action == "cxy" and post.is_draft:
         await cq.answer("Отменено")
         await P.drop_draft(app, post_id)
         await app.media.cleanup()
@@ -333,7 +343,7 @@ async def _after_title(app: App, uid: int, state: FSMContext, post_id: int, afte
         note = "💾 Сохранено в историю."
         if after == "upd":
             results = await update_everywhere(app, final_id, old_media)
-            note = "🔄 " + results_text(results, "Обновлено в каналах")
+            note = "🔄 " + results_text(results, "Обновлено")
         from . import history
         await history.show_card(app, uid, final_id, note=note)
         return

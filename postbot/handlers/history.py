@@ -9,7 +9,7 @@ from .. import ui
 from ..app import App
 from ..services import posts as P
 from ..services.media import KIND_NAMES
-from ..services.publisher import cancel_scheduled, delete_everywhere, results_text
+from ..services.publisher import DM_TITLE, cancel_scheduled, delete_everywhere, results_text
 from ..states import Hist
 from ..utils.text import short
 from .common import clicked, home, parts
@@ -41,7 +41,7 @@ async def show_scheduled(app: App, uid: int, edit: Message | None = None) -> Non
         "JOIN posts p ON p.id = pub.post_id LEFT JOIN channels c ON c.id = pub.channel_id "
         "WHERE pub.status = 'scheduled' ORDER BY pub.run_at LIMIT 40")
     rows = [[ui.b(f"{app.fmt(r['run_at'], short=True)} · #{r['post_id']} {short(r['title'] or '', 18)} · "
-                  f"{short(r['channel'] or '?', 14)}", f"h:{r['post_id']}:card")] for r in rows_db]
+                  f"{short(r['channel'] or 'Личка', 14)}", f"h:{r['post_id']}:card")] for r in rows_db]
     rows.append([ui.b("🔙 К истории", "h:list:0")])
     text = "⏰ Отложенные публикации:" if rows_db else "⏰ Отложенных публикаций нет."
     await ui.show(app, uid, text, ui.kb(rows), edit=edit)
@@ -64,11 +64,17 @@ async def card_view(app: App, post_id: int) -> tuple[str, list] | None:
     sent = [x for x in pubs if x.status == "sent"]
     sched = [x for x in pubs if x.status == "scheduled"]
     failed = [x for x in pubs if x.status == "failed"][-3:]
+    def where(x) -> str:
+        if x.is_dm:
+            return DM_TITLE
+        c = channels.get(x.channel_id)
+        return escape(c.title) if c else str(x.channel_id)
+
     if sent:
-        lines.append("\n📤 Сейчас в каналах:")
+        lines.append("\n📤 Сейчас висит:")
         for x in sent:
             c = channels.get(x.channel_id)
-            title = escape(c.title) if c else str(x.channel_id)
+            title = where(x)
             link = c.post_link(x.message_id or 0) if c else None
             name = f'<a href="{escape(link)}">{title}</a>' if link else title
             tail = f", удалится {app.fmt(x.delete_at, short=True)}" if x.delete_at else ""
@@ -76,25 +82,23 @@ async def card_view(app: App, post_id: int) -> tuple[str, list] | None:
     if sched:
         lines.append("\n⏰ Отложено:")
         for x in sched:
-            c = channels.get(x.channel_id)
-            lines.append(f"• {escape(c.title) if c else x.channel_id} на {app.fmt(x.run_at, short=True)}")
+            lines.append(f"• {where(x)} на {app.fmt(x.run_at, short=True)}")
     if failed:
         lines.append("\n❌ Не вышло:")
         for x in failed:
-            c = channels.get(x.channel_id)
-            lines.append(f"• {escape(c.title) if c else x.channel_id}: {escape(x.error or '')}")
+            lines.append(f"• {where(x)}: {escape(x.error or '')}")
     if not pubs:
         lines.append("\nЕщё нигде не публиковался.")
 
     pid = post.id
     rows = [
         [ui.b("👁 Показать пост", f"h:{pid}:show")],
+        [ui.b("✏️ Изменить: текст, медиа, кнопки", f"h:{pid}:edit", "primary")],
         [ui.b("🔁 Опубликовать повторно", f"h:{pid}:re", "success")],
-        [ui.b("✏️ Изменить и опубликовать", f"h:{pid}:edit", "primary")],
         [ui.b("🏷 Переименовать", f"h:{pid}:ren"), ui.b("📑 Копия", f"h:{pid}:copy")],
     ]
     if sent:
-        rows.append([ui.b(f"🧹 Удалить из каналов ({len(sent)})", f"h:{pid}:dch")])
+        rows.append([ui.b(f"🧹 Удалить везде, где вышел ({len(sent)})", f"h:{pid}:dch")])
     if sched:
         rows.append([ui.b(f"🚫 Отменить отложенные ({len(sched)})", f"h:{pid}:dsch")])
     rows.append([ui.b("🗑 Удалить из истории", f"h:{pid}:del", "danger")])
@@ -157,17 +161,16 @@ async def history_cb(cq: CallbackQuery, state: FSMContext, app: App) -> None:
         from .publish import show_channels
         await show_channels(app, uid, post_id, state, edit=msg)
 
-    elif action in ("edit", "copy"):
+    elif action == "edit":
         await cq.answer()
-        if action == "edit":
-            # старые незаконченные правки этого поста от этого человека больше не нужны
-            await app.db.execute("DELETE FROM posts WHERE source_id = ? AND is_draft = 1 AND author_id = ?",
-                                 (post_id, uid))
-        new_id = await P.clone_post(app, post_id, uid, as_edit=action == "edit")
         from .editor import open_editor
-        note = "✏️ Меняйте что нужно. Пока не нажмёте Сохранить, в истории остаётся старая версия." \
-            if action == "edit" else f"📑 Это копия поста #{post_id}, новый пост."
-        await open_editor(app, uid, new_id, edit=msg, note=note)
+        await open_editor(app, uid, post_id, edit=msg)
+
+    elif action == "copy":
+        await cq.answer()
+        new_id = await P.clone_post(app, post_id, uid, as_edit=False)
+        from .editor import open_editor
+        await open_editor(app, uid, new_id, edit=msg, note=f"📑 Это копия поста #{post_id}, новый пост.")
 
     elif action == "ren":
         await cq.answer()
@@ -178,14 +181,14 @@ async def history_cb(cq: CallbackQuery, state: FSMContext, app: App) -> None:
 
     elif action == "dch":
         await cq.answer()
-        await ui.show(app, uid, "Удалить этот пост из всех каналов, где он сейчас висит? В истории он останется.",
+        await ui.show(app, uid, "Удалить этот пост везде, где он сейчас висит? В истории он останется.",
                       ui.kb([[ui.b("🧹 Да, удалить из каналов", f"h:{post_id}:dchy", "danger")],
                              [ui.b("🔙 Нет", f"h:{post_id}:card")]]), edit=msg)
 
     elif action == "dchy":
         await cq.answer("Удаляю...")
         results = await delete_everywhere(app, post_id)
-        await show_card(app, uid, post_id, edit=msg, note="🧹 " + results_text(results, "Удалено из каналов"))
+        await show_card(app, uid, post_id, edit=msg, note="🧹 " + results_text(results, "Удалено"))
 
     elif action == "dsch":
         count = await cancel_scheduled(app, post_id)
