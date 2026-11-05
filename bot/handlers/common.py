@@ -19,7 +19,6 @@ if TYPE_CHECKING:
     from ..app import App
 
 log = logging.getLogger(__name__)
-router = Router(name="common")
 
 GROUP_TYPES = {"group", "supergroup"}
 IN_CHAT = {"member", "administrator", "creator", "restricted"}
@@ -38,12 +37,10 @@ def _format_uptime(seconds: float) -> str:
 
 
 # В личку сюда попадают только владельцы: остальных отсекает PrivateGateMiddleware.
-@router.message(CommandStart(), F.chat.type == "private")
 async def start(message: Message) -> None:
     await message.answer(t("start"))
 
 
-@router.message(Command("ping"))
 async def ping(message: Message, bot: Bot, app: App) -> None:
     if message.chat.type in GROUP_TYPES:
         # В группе отвечаем только админам, чтобы команду не использовали для шума.
@@ -54,7 +51,6 @@ async def ping(message: Message, bot: Bot, app: App) -> None:
     await message.reply(t("ping"))
 
 
-@router.message(Command("me"))
 async def me(message: Message, bot: Bot, app: App) -> None:
     author = message.from_user
     if author is None or author.is_bot:
@@ -78,7 +74,6 @@ async def me(message: Message, bot: Bot, app: App) -> None:
     await message.reply(text)
 
 
-@router.message(Command("status"), F.chat.type == "private")
 async def status(message: Message, bot: Bot, app: App) -> None:
     if message.from_user is None or message.from_user.id not in app.settings.owner_ids:
         return
@@ -100,7 +95,6 @@ async def status(message: Message, bot: Bot, app: App) -> None:
     )
 
 
-@router.message(F.migrate_to_chat_id)
 async def migrated(message: Message, bot: Bot, app: App) -> None:
     new_id = message.migrate_to_chat_id
     if new_id is None:
@@ -112,7 +106,6 @@ async def migrated(message: Message, bot: Bot, app: App) -> None:
     log.info("Чат %s стал супергруппой %s", message.chat.id, new_id)
 
 
-@router.my_chat_member()
 async def bot_status_changed(event: ChatMemberUpdated, bot: Bot, app: App) -> None:
     chat = event.chat
     if chat.type not in GROUP_TYPES:
@@ -135,8 +128,19 @@ async def bot_status_changed(event: ChatMemberUpdated, bot: Bot, app: App) -> No
             await bot.send_message(chat.id, text)
 
 
-@router.chat_member()
 async def member_changed(event: ChatMemberUpdated, app: App, bot: Bot) -> None:
     old, new = event.old_chat_member, event.new_chat_member
     if old.status in ADMIN or new.status in ADMIN:
         app.admins.invalidate(bot.id, event.chat.id)
+
+
+def build_router() -> Router:
+    router = Router(name="common")
+    router.message.register(start, CommandStart(), F.chat.type == "private")
+    router.message.register(ping, Command("ping"))
+    router.message.register(me, Command("me"))
+    router.message.register(status, Command("status"), F.chat.type == "private")
+    router.message.register(migrated, F.migrate_to_chat_id)
+    router.my_chat_member.register(bot_status_changed)
+    router.chat_member.register(member_changed)
+    return router

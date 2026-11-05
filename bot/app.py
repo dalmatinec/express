@@ -65,6 +65,6 @@ def build_dispatcher(app: App) -> Dispatcher:
     dp.update.outer_middleware(TrackingMiddleware(app.chats, app.stats))
     dp.update.outer_middleware(PrivateGateMiddleware(app.settings.owner_ids))
     dp.errors.register(_on_error)
-    dp.include_router(moderation.router)
-    dp.include_router(common.router)
+    dp.include_router(moderation.build_router())
+    dp.include_router(common.build_router())
     return dp

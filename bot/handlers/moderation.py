@@ -32,8 +32,6 @@ if TYPE_CHECKING:
     from ..app import App
 
 log = logging.getLogger(__name__)
-router = Router(name="moderation")
-router.message.filter(F.chat.type.in_({"group", "supergroup"}))
 
 # Одна команда может иметь несколько написаний. Один фильтр на все варианты: он проверяется
 # на каждом сообщении в каждом чате, поэтому не плодим отдельный обработчик на команду.
@@ -210,7 +208,6 @@ def _forget_admins_if_stale(app: App, bot_id: int, chat_id: int, error: Moderati
         app.admins.invalidate(bot_id, chat_id)
 
 
-@router.message(Command(*ALIASES, prefix="/!", ignore_case=True))
 async def on_command(message: Message, command: CommandObject, bot: Bot, app: App) -> None:
     action = ALIASES[command.command.lower()]
     chat_id = message.chat.id
@@ -279,7 +276,6 @@ async def _callback_admin(
     return _person(callback.from_user)
 
 
-@router.callback_query(F.data.startswith(UNDO_PREFIX))
 async def on_undo(callback: CallbackQuery, bot: Bot, app: App) -> None:
     message = callback.message
     if message is None or not isinstance(message, Message):
@@ -307,7 +303,6 @@ async def on_undo(callback: CallbackQuery, bot: Bot, app: App) -> None:
     await callback.answer(t("done"))
 
 
-@router.callback_query(F.data.startswith(ANON_PREFIX))
 async def on_anonymous_confirm(callback: CallbackQuery, bot: Bot, app: App) -> None:
     message = callback.message
     if message is None or not isinstance(message, Message):
@@ -337,3 +332,11 @@ async def on_anonymous_confirm(callback: CallbackQuery, bot: Bot, app: App) -> N
     await _delete(bot, chat_id, message.message_id)
     await callback.answer(t("done"))
 
+
+def build_router() -> Router:
+    router = Router(name="moderation")
+    router.message.filter(F.chat.type.in_({"group", "supergroup"}))
+    router.message.register(on_command, Command(*ALIASES, prefix="/!", ignore_case=True))
+    router.callback_query.register(on_undo, F.data.startswith(UNDO_PREFIX))
+    router.callback_query.register(on_anonymous_confirm, F.data.startswith(ANON_PREFIX))
+    return router
