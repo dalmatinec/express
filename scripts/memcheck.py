@@ -1,6 +1,7 @@
 """Сколько памяти занимает каждый слой. Каждый замер идёт в отдельном процессе."""
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 
@@ -10,45 +11,77 @@ RSS = (
     " if l.startswith('VmRSS:')))"
 )
 
-DEFER = """
-from pydantic._internal import _config
-_orig = _config.ConfigWrapper.for_model
-def _for_model(*a, **k):
-    w = _orig(*a, **k)
-    w.config_dict['defer_build'] = True
-    return w
-_config.ConfigWrapper.for_model = staticmethod(_for_model)
+USE = """
+import asyncio, json
+from aiogram import Bot, Dispatcher
+from aiogram.filters import Command
+from aiogram.methods import SendMessage, RestrictChatMember, GetUpdates, BanChatMember
+from aiogram.types import (Update, InlineKeyboardMarkup, InlineKeyboardButton, ChatPermissions,
+    ChatMemberOwner, User)
+for i in range(50):
+    u = Update.model_validate({'update_id': i, 'message': {'message_id': 1, 'date': 1,
+        'chat': {'id': -1, 'type': 'supergroup', 'title': 't'},
+        'from': {'id': 1, 'is_bot': False, 'first_name': 'x'}, 'text': '/ban 1 hi',
+        'reply_to_message': {'message_id': 2, 'date': 1, 'chat': {'id': -1, 'type': 'supergroup'},
+            'from': {'id': 2, 'is_bot': False, 'first_name': 'y'}, 'text': 'z'}}})
+    m = SendMessage(chat_id=-1, text='x', reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text='a', callback_data='b')]]))
+    d = m.model_dump(warnings=False)
+    RestrictChatMember(chat_id=-1, user_id=1, permissions=ChatPermissions(can_send_messages=False)).model_dump(warnings=False)
+    BanChatMember(chat_id=-1, user_id=1).model_dump(warnings=False)
+    GetUpdates(offset=1, timeout=1).model_dump(warnings=False)
+    Update.model_validate({'update_id': 1, 'callback_query': {'id': '1', 'chat_instance': 'c',
+        'from': {'id': 1, 'is_bot': False, 'first_name': 'x'}, 'data': 'a'}})
+    Update.model_validate({'update_id': 1, 'my_chat_member': {
+        'chat': {'id': -1, 'type': 'supergroup'}, 'from': {'id': 1, 'is_bot': False, 'first_name': 'x'},
+        'date': 1, 'old_chat_member': {'status': 'left', 'user': {'id': 1, 'is_bot': True, 'first_name': 'x'}},
+        'new_chat_member': {'status': 'member', 'user': {'id': 1, 'is_bot': True, 'first_name': 'x'}}}})
+assert u.message.reply_to_message.from_user.id == 2 and d['reply_markup'] is not None
 """
 
-PARSE = """
-from aiogram.types import Update
-for i in range(50):
-    Update.model_validate({'update_id': i, 'message': {'message_id': 1, 'date': 1,
-        'chat': {'id': -1, 'type': 'supergroup', 'title': 't'},
-        'from': {'id': 1, 'is_bot': False, 'first_name': 'x'}, 'text': 'hi'}})
+TRIM = """
+import gc, ctypes
+gc.collect(); ctypes.CDLL('libc.so.6').malloc_trim(0)
 """
+
+DROP = """
+import gc, sys, pydantic
+def _walk(c):
+    for s in c.__subclasses__():
+        yield s
+        yield from _walk(s)
+n = 0
+for c in set(_walk(pydantic.BaseModel)):
+    for a in ('__pydantic_core_schema__',):
+        if a in c.__dict__:
+            try:
+                delattr(c, a); n += 1
+            except Exception: pass
+"""
+
+BASE = "import bot.app, bot.runtime\n"
 
 CASES = {
-    "голый python": "",
-    "pydantic": "import pydantic",
-    "aiohttp": "import aiohttp",
-    "asyncpg": "import asyncpg",
-    "uvloop": "import uvloop",
-    "orjson": "import orjson",
-    "cryptography (fernet)": "from cryptography.fernet import Fernet",
-    "aiogram.types": "import aiogram.types",
-    "aiogram целиком": "import aiogram",
-    "бот": "import bot.app, bot.runtime",
-    "бот + разбор сообщений": "import bot.app, bot.runtime\n" + PARSE,
-    "defer_build: бот": DEFER + "import bot.app, bot.runtime",
-    "defer_build: бот + разбор": DEFER + "import bot.app, bot.runtime\n" + PARSE,
+    "бот": BASE,
+    "бот + работа": BASE + USE,
+    "gc+trim": BASE + TRIM,
+    "gc+trim + работа": BASE + TRIM + USE,
+    "gc+trim + работа + trim": BASE + TRIM + USE + TRIM,
+    "убрать схемы+trim": BASE + DROP + TRIM,
+    "убрать схемы+trim + работа": BASE + DROP + TRIM + USE,
+    "убрать схемы+trim + работа + trim": BASE + DROP + TRIM + USE + TRIM,
 }
 
-for name, code in CASES.items():
-    result = subprocess.run(
-        [sys.executable, "-c", f"{code}\n{RSS}"], capture_output=True, text=True, cwd="."
-    )
-    if result.returncode:
-        print(f"{name:32} ОШИБКА: {result.stderr.strip().splitlines()[-1][:120]}")
-    else:
-        print(f"{name:32} {int(result.stdout.strip().splitlines()[-1]) / 1024:6.1f} МБ")
+ENVS = {"": {}, "PYTHONMALLOC=malloc ": {"PYTHONMALLOC": "malloc"}}
+
+for prefix, extra in ENVS.items():
+    for name, code in CASES.items():
+        result = subprocess.run(
+            [sys.executable, "-c", f"{code}\n{RSS}"],
+            capture_output=True, text=True, cwd=".", env={**os.environ, **extra},
+        )
+        label = f"{prefix}{name}"
+        if result.returncode:
+            print(f"{label:52} ОШИБКА: {result.stderr.strip().splitlines()[-1][:120]}")
+        else:
+            print(f"{label:52} {int(result.stdout.strip().splitlines()[-1]) / 1024:6.1f} МБ")
