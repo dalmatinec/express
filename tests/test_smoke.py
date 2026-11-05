@@ -202,6 +202,8 @@ def _membership(old: str, new: str) -> dict[str, Any]:
 
     def member(status: str) -> dict[str, Any]:
         data: dict[str, Any] = {"status": status, "user": bot_user}
+        if status == "kicked":
+            data["until_date"] = 0
         if status == "administrator":
             data.update(
                 can_be_edited=False, is_anonymous=False, can_manage_chat=True,
@@ -439,7 +441,7 @@ def test_anonymous_admin_confirms_with_button():
             "from": {"id": 1087968824, "is_bot": True, "first_name": "Group",
                      "username": "GroupAnonymousBot"},
             "sender_chat": {"id": CHAT_ID, "type": "supergroup", "title": "Чат"},
-            "text": "/ban 123456 реклама",
+            "text": "/ban 555666 реклама",
         })
         assert not _sent_of(env, BanChatMember)
         data = _sent_of(env, SendMessage)[-1].reply_markup.inline_keyboard[0][0].callback_data
@@ -449,7 +451,7 @@ def test_anonymous_admin_confirms_with_button():
         assert not _sent_of(env, BanChatMember)
 
         await _press(env, data)
-        assert _sent_of(env, BanChatMember)[-1].user_id == 123456
+        assert _sent_of(env, BanChatMember)[-1].user_id == 555666
 
         before = len(_sent_of(env, BanChatMember))
         await _press(env, data)  # повторно кнопка уже не сработает
