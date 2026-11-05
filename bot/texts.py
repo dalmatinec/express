@@ -24,12 +24,12 @@ DEFAULTS: dict[str, str] = {
     "promoted": "✅ Права получены, бот готов к работе.",
     "demoted": "⚠️ Меня лишили прав администратора, модерация не работает.",
     "me": (
-        "👤 <b>{name}</b>\n"
+        "👤 <b>{name}</b> · {id}\n"
         "💬 Сообщений в этом чате: <b>{here}</b>\n"
         "🌐 Всего в чатах с этим ботом: <b>{total}</b> (чатов: {chats})"
     ),
     "me_private": (
-        "👤 <b>{name}</b>\n"
+        "👤 <b>{name}</b> · {id}\n"
         "🌐 Сообщений в чатах с этим ботом: <b>{total}</b> (чатов: {chats})"
     ),
     "status": (
@@ -44,32 +44,35 @@ DEFAULTS: dict[str, str] = {
     ),
 
     # Карточки наказаний
-    "card_ban": "🚫 <b>Бан</b> · {target}",
-    "card_mute": "🔇 <b>Мут</b> · {target}",
-    "card_kick": "👢 <b>Кик</b> · {target}",
-    "card_warn": "⚠️ <b>Предупреждение {count}/{limit}</b> · {target}",
+    "card_ban": "🚫 <b>Бан</b>",
+    "card_mute": "🔇 <b>Мут</b>",
+    "card_kick": "👢 <b>Кик</b>",
+    "card_warn": "⚠️ <b>Предупреждение {count}/{limit}</b> {bar}",
+    "card_target": "👤 {target} · {id}",
     "card_forever": "⏳ Навсегда",
-    "card_term": "⏳ {term}, до {until}",
-    "card_reason": "📝 {reason}",
+    "card_term": "⏳ {term} · до {until}",
+    "card_reason": "📝 <i>{reason}</i>",
     "card_admin": "👮 {admin}",
-    "card_escalated_ban": "🚫 Лимит предупреждений: бан",
-    "card_escalated_mute": "🔇 Лимит предупреждений: мут",
-    "card_escalated_kick": "👢 Лимит предупреждений: кик",
-    "card_lifted_ban": "✅ <b>Бан снят</b> · {target}",
-    "card_lifted_mute": "✅ <b>Мут снят</b> · {target}",
-    "card_lifted_warn": "✅ <b>Предупреждение снято</b> · {target}",
+    "card_auto": "🤖 Автоматически",
+    "card_escalated_ban": "🔺 <b>Лимит предупреждений:</b> бан",
+    "card_escalated_mute": "🔺 <b>Лимит предупреждений:</b> мут",
+    "card_escalated_kick": "🔺 <b>Лимит предупреждений:</b> кик",
+    "card_lifted_ban": "✅ <b>Бан снят</b>",
+    "card_lifted_mute": "✅ <b>Мут снят</b>",
+    "card_lifted_warn": "✅ <b>Предупреждение снято</b>",
     "btn_undo": "🔓 Снять",
     "btn_confirm_anon": "✅ Это я, выполнить",
     "anon_prompt": "Вы пишете как анонимный админ. Нажмите кнопку, чтобы я проверил ваши права.",
     "done": "Готово",
 
     # Просмотр
-    "warns": "⚠️ {target}: предупреждений {count}/{limit}",
-    "history_title": "📋 <b>История</b> · {target}",
+    "warns": "⚠️ <b>Предупреждения {count}/{limit}</b> {bar}\n👤 {target} · {id}",
+    "history_title": "📋 <b>История</b>\n👤 {target} · {id}",
     "journal_title": "📋 <b>Журнал чата</b>",
     "history_empty": "Записей нет.",
-    "history_line": "{icon} {date} · {term} · {reason} · {admin}",
-    "journal_line": "{icon} {date} · {target} · {term} · {reason} · {admin}",
+    "history_line": "{icon} {details}",
+    "journal_line": "{icon} {target} · {id}\n{details}",
+    "list_details": "{date} · {term} · {reason} · {admin}",
     "kind_ban": "🚫",
     "kind_mute": "🔇",
     "kind_kick": "👢",
@@ -79,6 +82,55 @@ DEFAULTS: dict[str, str] = {
     "by_system": "бот",
     "term_once": "разово",
     "term_forever": "навсегда",
+
+    # Защита
+    "reason_flood": "флуд",
+    "reason_links": "ссылка",
+    "reason_forward": "репост из канала",
+    "reason_mentions": "много упоминаний",
+    "reason_stopword": "запрещённое слово",
+    "reason_duplicate": "одинаковые сообщения",
+    "spam_notice": "🧹 {target}: сообщение удалено, причина: {reason}",
+    "protect_no_rights": (
+        "⚠️ Защита включена, но у меня нет права удалять сообщения. Выдайте его в настройках чата."
+    ),
+    "panel_title": "🛡 <b>Защита чата</b>",
+    "panel_flood": "⚡️ Антифлуд: {state}",
+    "panel_flood_on": "{limit} сообщений за {window} с, затем {action} на {term}",
+    "panel_links": "🔗 Ссылки: {state}",
+    "panel_links_telegram": "удалять ссылки на Telegram",
+    "panel_links_all": "удалять все ссылки",
+    "panel_forwards": "↪️ Репосты из каналов: {state}",
+    "panel_mentions": "📣 Массовые упоминания: {state}",
+    "panel_duplicates": "🔁 Одинаковые сообщения: {state}",
+    "panel_action": "⚖️ За спам: {state}",
+    "panel_hint": "Админы и люди из белого списка под проверки не попадают.",
+    "state_on": "вкл",
+    "state_off": "выкл",
+    "state_delete": "удалять",
+    "state_warn": "удалять и предупреждать",
+    "action_mute": "мут",
+    "action_ban": "бан",
+    "action_kick": "кик",
+    "btn_flood": "⚡️ Антифлуд: {state}",
+    "btn_links": "🔗 Ссылки: {state}",
+    "btn_links_telegram": "Telegram",
+    "btn_links_all": "все",
+    "btn_forwards": "↪️ Репосты: {state}",
+    "btn_mentions": "📣 Упоминания: {state}",
+    "btn_duplicates": "🔁 Повторы: {state}",
+    "btn_action": "⚖️ {state}",
+    "btn_action_warn": "Предупреждать",
+    "btn_action_delete": "Только удалять",
+
+    # Белый список
+    "whitelist_added": "✅ <b>Добавлен в белый список</b>\n👤 {target} · {id}",
+    "whitelist_already": "Этот человек уже в белом списке.",
+    "whitelist_removed": "➖ <b>Убран из белого списка</b>\n👤 {target} · {id}",
+    "whitelist_missing": "Этого человека нет в белом списке.",
+    "whitelist_title": "📃 <b>Белый список</b> · {count}",
+    "whitelist_line": "{name} · {id}",
+    "whitelist_empty": "Пока никого нет.",
 
     # Подсказки и ошибки
     "usage_target": (
@@ -105,6 +157,7 @@ DEFAULTS: dict[str, str] = {
     "mod_err_not_found": "Запись не найдена.",
     "mod_err_kick_undo": "Кик отменить нельзя: человек может вернуться сам.",
     "mod_err_expired": "Кнопка устарела, отправьте команду ещё раз.",
+    "mod_err_bad_button": "Эта кнопка не работает.",
 }
 
 

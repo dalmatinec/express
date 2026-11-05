@@ -12,8 +12,9 @@ from aiogram.exceptions import (
     TelegramForbiddenError,
     TelegramRetryAfter,
 )
-from aiogram.types import ChatPermissions
+from aiogram.types import ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup
 
+from ..texts import t
 from .service import ModerationError, classify_telegram_error
 
 # Заполняем по списку полей: новое право в Telegram не потребует менять этот код.
@@ -24,6 +25,16 @@ FREE = ChatPermissions(**dict.fromkeys(_ALL_FIELDS, True))
 
 # Минимальный срок бана: Telegram считает срок короче 30 секунд вечным.
 _KICK_BAN_SECONDS = 35
+
+
+UNDO_PREFIX = "mod:u:"
+
+
+def undo_keyboard(punishment_id: int) -> InlineKeyboardMarkup:
+    button = InlineKeyboardButton(
+        text=t("btn_undo"), callback_data=f"{UNDO_PREFIX}{punishment_id}"
+    )
+    return InlineKeyboardMarkup(inline_keyboard=[[button]])
 
 
 async def _call[T](request: Awaitable[T]) -> T:

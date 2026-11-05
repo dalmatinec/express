@@ -46,6 +46,10 @@ ADMIN_COMMANDS = [
     BotCommand(command="warns", description="Сколько предупреждений"),
     BotCommand(command="history", description="История наказаний человека"),
     BotCommand(command="journal", description="Журнал чата"),
+    BotCommand(command="protect", description="Защита чата: антифлуд и антиспам"),
+    BotCommand(command="whitelist", description="Добавить в белый список"),
+    BotCommand(command="unwhitelist", description="Убрать из белого списка"),
+    BotCommand(command="whitelisted", description="Показать белый список"),
 ]
 
 
@@ -120,7 +124,7 @@ class BotManager:
         return Bot(
             token,
             session=self._session,
-            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+            default=DefaultBotProperties(parse_mode=ParseMode.HTML, link_preview_is_disabled=True),
         )
 
     def _start_loop(self, bot: Bot, *, is_main: bool, label: str) -> None:

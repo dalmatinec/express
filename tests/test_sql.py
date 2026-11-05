@@ -326,7 +326,7 @@ def test_history_and_journal_order_and_names(pg):
     pg.run("UPDATE punishments SET created_at = now() - interval '1 hour';")
     _punish(pg, "kick", reason="'позже'")
     rows = pg.prepared(q.USER_HISTORY, "1", "-100", "5", "10").splitlines()
-    assert rows[0].startswith("kick|позже") and rows[0].endswith("Админ")
+    assert rows[0].startswith("kick|позже") and "|Админ|" in rows[0]
     assert rows[1].startswith("warn|раньше")
     assert len(pg.prepared(q.USER_HISTORY, "1", "-100", "5", "1").splitlines()) == 1
     assert "Вася" in pg.prepared(q.CHAT_JOURNAL, "1", "-100", "15").splitlines()[0]
@@ -368,3 +368,42 @@ def test_moderation_queries_do_not_scan_table(seeded_punishments, statement, arg
     )
     assert "punishments_" in plan, plan
     assert "Seq Scan on punishments" not in plan, plan
+
+
+# --- Белый список и переезд группы ---
+
+
+def test_whitelist_add_remove(pg):
+    assert pg.prepared(q.WHITELIST_ADD, "1", "-100", "5", "9") == "5"
+    assert pg.prepared(q.WHITELIST_ADD, "1", "-100", "5", "9") == ""
+    assert pg.prepared(q.WHITELIST_IDS, "1", "-100") == "5"
+    assert pg.prepared(q.WHITELIST_IDS, "2", "-100") == ""
+    pg.run("INSERT INTO users (id, first_name, username) VALUES (5, 'Вася', 'vasya');")
+    assert pg.prepared(q.WHITELIST_LIST, "1", "-100", "10") == "5|Вася|vasya"
+    assert pg.prepared(q.WHITELIST_REMOVE, "1", "-100", "5") == "5"
+    assert pg.prepared(q.WHITELIST_REMOVE, "1", "-100", "5") == ""
+
+
+def test_migration_moves_journal_and_whitelist(pg):
+    _punish(pg, "warn")
+    _punish(pg, "mute")
+    pg.prepared(q.WHITELIST_ADD, "1", "-100", "7", "9")
+    pg.prepared(q.WHITELIST_ADD, "1", "-200", "7", "9")
+
+    pg.prepared(q.MIGRATE_PUNISHMENTS, "1", "-100", "-200")
+    pg.prepared(q.MIGRATE_WHITELIST, "1", "-100", "-200")
+
+    assert pg.value("SELECT count(*) FROM punishments WHERE chat_id = -200") == "2"
+    assert pg.value("SELECT count(*) FROM chat_whitelist WHERE chat_id = -100") == "0"
+    assert pg.value("SELECT count(*) FROM chat_whitelist WHERE chat_id = -200") == "1"
+
+
+def test_migration_of_journal_survives_active_mute_in_new_chat(pg):
+    _punish(pg, "mute")
+    pg.prepared(
+        q.INSERT_PUNISHMENT, "1", "-200", "5", "'mute'", "9", "NULL", "NULL", "'manual'"
+    )
+    pg.prepared(q.MIGRATE_PUNISHMENTS, "1", "-100", "-200")
+    assert pg.value(
+        "SELECT count(*) FROM punishments WHERE chat_id = -200 AND revoked_at IS NULL"
+    ) == "1"

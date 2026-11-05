@@ -13,6 +13,7 @@ from aiogram.types import ChatMemberUpdated, Message
 
 from ..db import queries as q
 from ..metrics import rss_mb
+from ..moderation.cards import id_code
 from ..texts import t
 
 if TYPE_CHECKING:
@@ -63,13 +64,18 @@ async def me(message: Message, bot: Bot, app: App) -> None:
         text = t(
             "me",
             name=author.full_name,
+            id=id_code(author.id),
             here=here or 0,
             total=totals["messages"],
             chats=totals["chats"],
         )
     else:
         text = t(
-            "me_private", name=author.full_name, total=totals["messages"], chats=totals["chats"]
+            "me_private",
+            name=author.full_name,
+            id=id_code(author.id),
+            total=totals["messages"],
+            chats=totals["chats"],
         )
     await message.reply(text)
 
@@ -102,6 +108,8 @@ async def migrated(message: Message, bot: Bot, app: App) -> None:
     # Сначала дописываем счётчики на старый id, чтобы они переехали вместе с остальными.
     await app.stats.flush()
     await app.chats.migrate(bot.id, message.chat.id, new_id)
+    app.protection.whitelist.forget(bot.id, message.chat.id)
+    app.protection.whitelist.forget(bot.id, new_id)
     app.admins.invalidate(bot.id, message.chat.id)
     log.info("Чат %s стал супергруппой %s", message.chat.id, new_id)
 

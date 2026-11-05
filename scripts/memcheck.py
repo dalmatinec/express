@@ -1,4 +1,5 @@
-"""Сколько памяти занимает каждый слой. Каждый замер идёт в отдельном процессе."""
+"""Сколько памяти занимает бот. Каждый замер идёт в отдельном процессе. Предел следит за ростом."""
+# ruff: noqa: E501
 from __future__ import annotations
 
 import os
@@ -39,17 +40,12 @@ for i in range(50):
 assert u.message.reply_to_message.from_user.id == 2 and d['reply_markup'] is not None
 """
 
-LEAN = "import bot.lean; assert bot.lean.install()\n"
 BASE = "import bot.app, bot.runtime\n"
+LIMIT_MB = 110
 
-CASES = {
-    "обычная загрузка": BASE,
-    "обычная загрузка + работа": BASE + USE,
-    "экономная загрузка": LEAN + BASE,
-    "экономная загрузка + работа": LEAN + BASE + USE,
-}
-
-ENVS = {"": {}}
+CASES = {"загрузка": BASE, "загрузка и работа": BASE + USE}
+ENVS = {"без экономии: ": {"LEAN_IMPORT": "0"}, "": {}}
+worst = 0.0
 
 for prefix, extra in ENVS.items():
     for name, code in CASES.items():
@@ -60,5 +56,13 @@ for prefix, extra in ENVS.items():
         label = f"{prefix}{name}"
         if result.returncode:
             print(f"{label:52} ОШИБКА: {result.stderr.strip().splitlines()[-1][:120]}")
+            sys.exit(1)
         else:
-            print(f"{label:52} {int(result.stdout.strip().splitlines()[-1]) / 1024:6.1f} МБ")
+            used = int(result.stdout.strip().splitlines()[-1]) / 1024
+            print(f"{label:52} {used:6.1f} МБ")
+            if not prefix:
+                worst = max(worst, used)
+
+if worst > LIMIT_MB:
+    print(f"Память выросла: {worst:.1f} МБ при пределе {LIMIT_MB} МБ")
+    sys.exit(1)

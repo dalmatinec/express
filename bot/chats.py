@@ -71,6 +71,8 @@ class ChatRepo:
         async with self._db.transaction() as connection:
             await connection.execute(q.MIGRATE_CHAT, bot_id, old_id, new_id)
             await connection.execute(q.MIGRATE_MEMBERS, bot_id, old_id, new_id)
+            await connection.execute(q.MIGRATE_PUNISHMENTS, bot_id, old_id, new_id)
+            await connection.execute(q.MIGRATE_WHITELIST, bot_id, old_id, new_id)
         self.cache.delete((bot_id, old_id))
         self.cache.delete((bot_id, new_id))
 

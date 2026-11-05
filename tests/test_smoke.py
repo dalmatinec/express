@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import subprocess
+import sys
 import uuid
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -23,6 +25,7 @@ from aiogram.fsm.storage.base import StorageKey  # noqa: E402
 from aiogram.methods import (  # noqa: E402
     BanChatMember,
     DeleteMessage,
+    DeleteMessages,
     EditMessageText,
     GetChatAdministrators,
     GetMe,
@@ -679,3 +682,142 @@ def test_entry_point_reports_missing_settings(monkeypatch, tmp_path, capsys):
     monkeypatch.chdir(tmp_path)
     assert main() == 2
     assert "BOT_TOKEN" in capsys.readouterr().err
+
+
+# --- Экономная загрузка и защита ---
+
+
+def test_lean_import_is_active_and_every_model_builds():
+    """Пропуск общей сборки не должен сломать ни одну модель aiogram, включая редкие типы."""
+    code = (
+        "import bot, pydantic, inspect, aiogram.types as t, aiogram.methods as m\n"
+        "models = [getattr(mod, n) for mod in (t, m) for n in mod.__all__]\n"
+        "models = [c for c in models if inspect.isclass(c) and issubclass(c, pydantic.BaseModel)]\n"
+        "assert len(models) > 300\n"
+        "assert not t.Message.__pydantic_complete__\n"
+        "for c in models:\n"
+        "    c.model_rebuild(force=True, raise_errors=True)\n"
+        "print(len(models))\n"
+    )
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr[-2000:]
+
+
+def test_spam_link_removed_end_to_end_and_handlers_skipped():
+    async def body(env: Env) -> None:
+        await env.say("/me")  # чат зарегистрирован, команда обработана
+        replies = len(env.session.texts())
+        await env.feed(message={
+            "message_id": 60,
+            "date": 1_700_000_000,
+            "chat": {"id": CHAT_ID, "type": "supergroup", "title": "Чат"},
+            "from": {"id": 5, "is_bot": False, "first_name": "Вася"},
+            "text": "/me заходи t.me/+abcdef",
+            "entities": [{"type": "url", "offset": 11, "length": 12}],
+        })
+        assert _sent_of(env, DeleteMessages)[-1].message_ids == [60]
+        new = env.session.texts()[replies:]
+        assert len(new) == 1 and "Предупреждение 1/3" in new[0]  # а /me не сработала
+
+    scenario(body)
+
+
+def test_button_link_and_hidden_link_are_seen():
+    async def body(env: Env) -> None:
+        await env.say("привет")
+        await env.feed(message={
+            "message_id": 61, "date": 1_700_000_000,
+            "chat": {"id": CHAT_ID, "type": "supergroup", "title": "Чат"},
+            "from": {"id": 5, "is_bot": False, "first_name": "Вася"},
+            "text": "жми сюда",
+            "entities": [{"type": "text_link", "offset": 0, "length": 3,
+                          "url": "https://t.me/+hidden"}],
+        })
+        assert _sent_of(env, DeleteMessages)[-1].message_ids == [61]
+        await env.feed(message={
+            "message_id": 62, "date": 1_700_000_000,
+            "chat": {"id": CHAT_ID, "type": "supergroup", "title": "Чат"},
+            "from": {"id": 6, "is_bot": False, "first_name": "Петя"},
+            "text": "реклама",
+            "reply_markup": {"inline_keyboard": [[{"text": "вход", "url": "https://t.me/+x"}]]},
+        })
+        assert _sent_of(env, DeleteMessages)[-1].message_ids == [62]
+
+    scenario(body)
+
+
+def test_flood_mutes_end_to_end():
+    async def body(env: Env) -> None:
+        for _ in range(7):
+            await env.say("сообщение")
+        assert _sent_of(env, RestrictChatMember)[-1].user_id == 5
+        assert len(_sent_of(env, DeleteMessages)[-1].message_ids) == 7
+        assert "флуд" in env.session.texts()[-1] and "Автоматически" in env.session.texts()[-1]
+
+    scenario(body)
+
+
+def test_whitelist_commands_and_exemption():
+    async def body(env: Env) -> None:
+        await _command(env, "/whitelist")
+        assert "Добавлен" in env.session.texts()[-1]
+        await env.say("заходи t.me/+abc", user_id=5, entities=[
+            {"type": "url", "offset": 7, "length": 9}
+        ])
+        assert not _sent_of(env, DeleteMessages)
+        await _command(env, "/whitelisted", reply_to=None)
+        assert "<code>5</code>" in env.session.texts()[-1]
+        await _command(env, "/unwhitelist")
+        assert "Убран" in env.session.texts()[-1]
+        await env.say("заходи t.me/+abc", user_id=5, entities=[
+            {"type": "url", "offset": 7, "length": 9}
+        ])
+        assert _sent_of(env, DeleteMessages)
+
+    scenario(body)
+
+
+def test_protect_panel_toggles_only_for_admins():
+    async def body(env: Env) -> None:
+        await _command(env, "/protect", reply_to=None)
+        panel = _sent_of(env, SendMessage)[-1]
+        assert "Защита чата" in panel.text
+        await _press(env, "prot:links", user_id=6)
+        info = await env.app.chats.get(BOT_ID, CHAT_ID)
+        assert "protect" not in info.settings
+
+        await _press(env, "prot:links")
+        info = await env.app.chats.get(BOT_ID, CHAT_ID)
+        assert info.settings["protect"]["link_mode"] == "all"
+        assert "все ссылки" in _sent_of(env, EditMessageText)[-1].text
+
+        await _press(env, "prot:__class__")  # подделанная кнопка ничего не меняет
+        info = await env.app.chats.get(BOT_ID, CHAT_ID)
+        assert info.settings["protect"]["link_mode"] == "all"
+
+    scenario(body)
+
+
+def test_card_shows_copyable_id_and_previews_are_off_in_real_bot_setup():
+    async def body(env: Env) -> None:
+        await _command(env, "/kick флуд")
+        assert "<code>5</code>" in env.session.texts()[-1]
+        manager = _manager(env)
+        assert manager._new_bot(TOKEN).default.link_preview_is_disabled is True
+
+    scenario(body)
+
+
+def test_group_migration_moves_journal_and_whitelist():
+    async def body(env: Env) -> None:
+        await _command(env, "/whitelist")
+        await env.say("t.me/+abc", user_id=6, entities=[{"type": "url", "offset": 0, "length": 9}])
+        await env.feed(message={
+            "message_id": 70, "date": 1_700_000_000,
+            "chat": {"id": CHAT_ID, "type": "group", "title": "Чат"},
+            "from": ADMIN_USER, "migrate_to_chat_id": -1009,
+        })
+        assert 5 in await env.app.protection.whitelist.ids(BOT_ID, -1009)
+        assert await env.app.moderation.repo.count_warns(BOT_ID, -1009, 6) == 1
+
+    scenario(body)

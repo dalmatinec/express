@@ -164,7 +164,7 @@ class FakeRepo:
         self.rows.append({
             "id": len(self.rows) + 1, "user_id": user_id, "kind": kind, "admin_id": admin_id,
             "reason": reason, "expires_at": expires, "source": source, "revoked_at": None,
-            "first_name": "Вася",
+            "first_name": "Вася", "username": None,
         })
         return self.rows[-1]["id"]
 
@@ -450,11 +450,12 @@ def test_card_is_small_and_has_all_fields():
     )
     card = render_card(outcome, 5)
     lines = card.splitlines()
-    assert len(lines) == 4
-    assert "Мут" in lines[0] and 'href="tg://user?id=5"' in lines[0]
-    assert "2 ч" in lines[1] and "05.11 19:00" in lines[1]  # 14:00 UTC это 19:00 в Алматы
-    assert "спам" in lines[2]
-    assert "Админ" in lines[3]
+    assert len(lines) == 5
+    assert "Мут" in lines[0]
+    assert 'href="tg://user?id=5"' in lines[1] and "<code>5</code>" in lines[1]
+    assert "2 ч" in lines[2] and "05.11 19:00" in lines[2]  # 14:00 UTC это 19:00 в Алматы
+    assert "<i>спам</i>" in lines[3]
+    assert "Админ" in lines[4] and "tg://user" not in lines[4]  # админу не шлём уведомление
 
 
 def test_card_without_reason_and_forever():
@@ -491,10 +492,37 @@ def test_history_and_journal_rendering():
     row = {
         "kind": "mute", "user_id": 5, "reason": None, "created_at": NOW,
         "expires_at": NOW + timedelta(hours=2), "revoked_at": None, "admin_name": None,
-        "target_name": "<Вася>",
+        "admin_username": None, "target_name": "<Вася>", "target_username": None,
     }
     history = render_history(TARGET, [row], 5)
     assert "2 ч" in history and "без причины" in history and "бот" in history
     journal = render_journal([{**row, "revoked_at": NOW, "kind": "kick"}], 5)
     assert "&lt;Вася&gt;" in journal and "↩️" in journal and "разово" in journal
     assert "Записей нет" in render_journal([], 5)
+
+
+def test_lists_do_not_ping_and_ids_are_copyable():
+    row = {
+        "kind": "ban", "user_id": 5, "reason": "x" * 300, "created_at": NOW,
+        "expires_at": None, "revoked_at": None, "admin_name": "Админ",
+        "admin_username": "boss", "target_name": "Вася", "target_username": "vasya",
+    }
+    journal = render_journal([row] * 15, 5)
+    assert "tg://user" not in journal
+    assert 'href="https://t.me/vasya"' in journal and 'href="https://t.me/boss"' in journal
+    assert "<code>5</code>" in journal and "blockquote expandable" in journal
+    assert len(journal) < 4096  # предел длины сообщения Telegram
+    assert "x" * 61 not in journal
+
+
+def test_auto_card_and_progress_bar():
+    card = render_card(
+        Outcome("warn", TARGET, Person(0, "бот"), "ссылка", warn_count=2, warn_limit=3), 5
+    )
+    assert "▰▰▱" in card and "Автоматически" in card and "👮" not in card
+
+
+def test_admin_with_username_is_clickable_without_ping():
+    admin = Person(1, "Админ", "boss")
+    card = render_card(Outcome("kick", TARGET, admin), 5)
+    assert 'href="https://t.me/boss"' in card

@@ -608,7 +608,7 @@ def test_rss_mb_handles_missing_file():
 
 
 def test_texts_escape_values_but_keep_template_html():
-    text = t("me_private", name="<b>взлом</b>", total=1, chats=1)
+    text = t("me_private", name="<b>взлом</b>", id=1, total=1, chats=1)
     assert "&lt;b&gt;взлом&lt;/b&gt;" in text
     assert "<b>&lt;b&gt;" in text
 

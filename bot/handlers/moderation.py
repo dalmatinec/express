@@ -16,16 +16,21 @@ from ..admins import AdminRights
 from ..cache import TTLCache
 from ..db import queries as q
 from ..moderation.cards import (
+    id_code,
     mention,
+    progress,
     render_card,
     render_history,
     render_journal,
     render_lifted,
+    render_whitelist,
     undo_target,
 )
 from ..moderation.parser import ParsedArgs, parse_args
 from ..moderation.service import ModerationError, ModSettings, Outcome, Person
-from ..moderation.telegram import AiogramActions
+from ..moderation.telegram import UNDO_PREFIX, AiogramActions, undo_keyboard
+from ..protection.panel import PANEL_PREFIX, render_panel
+from ..protection.settings import toggle
 from ..texts import t
 
 if TYPE_CHECKING:
@@ -46,14 +51,18 @@ _ACTIONS = {
     "warns": ("warns", "варны", "преды"),
     "history": ("history", "история"),
     "journal": ("journal", "журнал"),
+    "whitelist": ("whitelist", "белый"),
+    "unwhitelist": ("unwhitelist", "небелый"),
+    "whitelisted": ("whitelisted", "белые"),
+    "protect": ("protect", "защита"),
 }
 ALIASES = {alias: action for action, names in _ACTIONS.items() for alias in names}
 WITH_DURATION = frozenset({"ban", "mute"})
-NO_TARGET = frozenset({"journal"})
+NO_TARGET = frozenset({"journal", "whitelisted", "protect"})
 HISTORY_LIMIT = 10
 JOURNAL_LIMIT = 15
+WHITELIST_LIMIT = 100
 
-UNDO_PREFIX = "mod:u:"
 ANON_PREFIX = "mod:a:"
 
 
@@ -61,6 +70,7 @@ ANON_PREFIX = "mod:a:"
 class PendingCommand:
     """Команда анонимного админа, ждёт нажатия кнопки."""
 
+    chat_id: int
     action: str
     target: Person | None
     args: ParsedArgs
@@ -73,14 +83,7 @@ _pending: TTLCache[str, PendingCommand] = TTLCache(1_000, 300.0)
 
 
 def _person(user: User) -> Person:
-    return Person(user.id, user.full_name)
-
-
-def _undo_keyboard(punishment_id: int) -> InlineKeyboardMarkup:
-    button = InlineKeyboardButton(
-        text=t("btn_undo"), callback_data=f"{UNDO_PREFIX}{punishment_id}"
-    )
-    return InlineKeyboardMarkup(inline_keyboard=[[button]])
+    return Person(user.id, user.full_name, user.username)
 
 
 async def _find_target(
@@ -93,7 +96,9 @@ async def _find_target(
             return await _person_by_username(args.target[1:], app)
         user_id = int(args.target)
         row = await app.db.fetchrow(q.GET_USER, user_id)
-        return Person(user_id, row["first_name"] if row and row["first_name"] else f"ID {user_id}")
+        if row is None:
+            return Person(user_id, f"ID {user_id}")
+        return Person(user_id, row["first_name"] or f"ID {user_id}", row["username"])
     reply = message.reply_to_message
     # В форуме сообщение без ответа формально отвечает на создание темы: это не цель.
     if reply is None or reply.forum_topic_created is not None:
@@ -111,7 +116,7 @@ async def _person_by_username(username: str, app: App) -> Person:
         row = await app.db.fetchrow(q.FIND_USER_BY_USERNAME, username)
     if row is None:
         raise ModerationError("unknown_username")
-    return Person(row["id"], row["first_name"] or f"@{username}")
+    return Person(row["id"], row["first_name"] or f"@{username}", row["username"])
 
 
 def _mention_target(message: Message) -> tuple[Person | None, str | None]:
@@ -174,7 +179,36 @@ async def _execute(
         text = render_history(target, rows, offset)
     elif action == "warns":
         count = await service.repo.count_warns(bot.id, chat_id, target.id)
-        text = t("warns", target=mention(target), count=count, limit=settings.warn_limit)
+        text = t(
+            "warns",
+            target=mention(target),
+            id=id_code(target.id),
+            count=count,
+            limit=settings.warn_limit,
+            bar=progress(count, settings.warn_limit),
+        )
+    elif action == "protect":
+        info = await app.chats.get(bot.id, chat_id)
+        protect = app.protection.settings_for(bot.id, chat_id, info.settings if info else {})
+        text, keyboard = render_panel(protect)
+    elif action == "whitelisted":
+        text = render_whitelist(
+            await app.protection.whitelist.listing(bot.id, chat_id, WHITELIST_LIMIT)
+        )
+    elif action == "whitelist":
+        added = await app.protection.whitelist.add(bot.id, chat_id, target.id, admin.id)
+        text = (
+            t("whitelist_added", target=mention(target), id=id_code(target.id))
+            if added
+            else t("whitelist_already")
+        )
+    elif action == "unwhitelist":
+        removed = await app.protection.whitelist.remove(bot.id, chat_id, target.id)
+        text = (
+            t("whitelist_removed", target=mention(target), id=id_code(target.id))
+            if removed
+            else t("whitelist_missing")
+        )
     elif action in {"unban", "unmute", "unwarn"}:
         outcome: Outcome
         if action == "unwarn":
@@ -195,7 +229,7 @@ async def _execute(
         text = render_card(outcome, offset)
         undo_id = undo_target(outcome)
         if undo_id is not None:
-            keyboard = _undo_keyboard(undo_id)
+            keyboard = undo_keyboard(undo_id)
 
     await _send(bot, chat_id, thread_id, text, keyboard)
     if settings.delete_commands:
@@ -247,7 +281,9 @@ async def on_command(message: Message, command: CommandObject, bot: Bot, app: Ap
             token = secrets.token_urlsafe(8)
             _pending.set(
                 token,
-                PendingCommand(action, target, args, message.message_id, message.message_thread_id),
+                PendingCommand(
+                    chat_id, action, target, args, message.message_id, message.message_thread_id
+                ),
             )
             button = InlineKeyboardButton(
                 text=t("btn_confirm_anon"), callback_data=f"{ANON_PREFIX}{token}"
@@ -285,7 +321,11 @@ async def on_undo(callback: CallbackQuery, bot: Bot, app: App) -> None:
     admin = await _callback_admin(callback, bot, app, chat_id)
     if admin is None:
         return
-    punishment_id = int(callback.data.removeprefix(UNDO_PREFIX))
+    try:
+        punishment_id = int(callback.data.removeprefix(UNDO_PREFIX))
+    except ValueError:
+        await callback.answer(t("mod_err_bad_button"), show_alert=True)
+        return
     try:
         await app.moderation.check_bot(bot, chat_id)
         outcome = await app.moderation.undo(
@@ -311,7 +351,7 @@ async def on_anonymous_confirm(callback: CallbackQuery, bot: Bot, app: App) -> N
     chat_id = message.chat.id
     token = callback.data.removeprefix(ANON_PREFIX)
     pending = _pending.get(token)
-    if pending is None:
+    if pending is None or pending.chat_id != chat_id:
         await callback.answer(t("mod_err_expired"), show_alert=True)
         await _delete(bot, chat_id, message.message_id)
         return
@@ -333,10 +373,33 @@ async def on_anonymous_confirm(callback: CallbackQuery, bot: Bot, app: App) -> N
     await callback.answer(t("done"))
 
 
+async def on_panel(callback: CallbackQuery, bot: Bot, app: App) -> None:
+    message = callback.message
+    if message is None or not isinstance(message, Message):
+        await callback.answer(t("mod_err_expired"), show_alert=True)
+        return
+    chat_id = message.chat.id
+    if await _callback_admin(callback, bot, app, chat_id) is None:
+        return
+    info = await app.chats.get(bot.id, chat_id)
+    current = app.protection.settings_for(bot.id, chat_id, info.settings if info else {})
+    try:
+        changed = toggle(current, callback.data.removeprefix(PANEL_PREFIX))
+    except ValueError:
+        await callback.answer(t("mod_err_bad_button"), show_alert=True)
+        return
+    await app.chats.update_settings(bot.id, chat_id, {"protect": changed.to_json()})
+    text, keyboard = render_panel(changed)
+    with suppress(TelegramAPIError):
+        await message.edit_text(text, reply_markup=keyboard)
+    await callback.answer(t("done"))
+
+
 def build_router() -> Router:
     router = Router(name="moderation")
     router.message.filter(F.chat.type.in_({"group", "supergroup"}))
     router.message.register(on_command, Command(*ALIASES, prefix="/!", ignore_case=True))
     router.callback_query.register(on_undo, F.data.startswith(UNDO_PREFIX))
     router.callback_query.register(on_anonymous_confirm, F.data.startswith(ANON_PREFIX))
+    router.callback_query.register(on_panel, F.data.startswith(PANEL_PREFIX))
     return router

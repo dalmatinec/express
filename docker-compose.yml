@@ -16,6 +16,8 @@ services:
       timeout: 3s
       retries: 20
     mem_limit: 256m
+    security_opt:
+      - no-new-privileges:true
     logging: &logging
       driver: json-file
       options:
@@ -33,7 +35,16 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    mem_limit: 256m
+    mem_limit: 192m
+    pids_limit: 64
+    # Боту не нужно ничего писать на диск и ничего менять в системе.
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     logging: *logging
 
 # Наружу не открыт ни один порт: бот сам ходит в Telegram, база доступна только внутри Docker.

@@ -15,9 +15,10 @@ from .config import Settings
 from .db.pool import Database
 from .fsm_store import FsmStore
 from .handlers import common, moderation
-from .middlewares import PrivateGateMiddleware, TrackingMiddleware
+from .middlewares import PrivateGateMiddleware, ProtectionMiddleware, TrackingMiddleware
 from .moderation.repo import PunishmentRepo
 from .moderation.service import Moderation
+from .protection.service import Protection, WhitelistRepo
 from .stats import StatsBuffer
 from .storage import PgStorage
 
@@ -37,12 +38,14 @@ class App:
     fsm: FsmStore
     admins: AdminCache
     moderation: Moderation
+    protection: Protection
     manager: Any = None  # BotManager, задаётся после сборки диспетчера
     started_at: float = field(default_factory=time.monotonic)
 
 
 def build_app(settings: Settings, db: Database) -> App:
     admins = AdminCache(_fetch_admins)
+    moderation_service = Moderation(PunishmentRepo(db), admins)
     return App(
         settings=settings,
         db=db,
@@ -50,7 +53,8 @@ def build_app(settings: Settings, db: Database) -> App:
         stats=StatsBuffer(db, flush_seconds=settings.stats_flush_seconds),
         fsm=FsmStore(db),
         admins=admins,
-        moderation=Moderation(PunishmentRepo(db), admins),
+        moderation=moderation_service,
+        protection=Protection(moderation_service, WhitelistRepo(db)),
     )
 
 
@@ -64,6 +68,7 @@ def build_dispatcher(app: App) -> Dispatcher:
     dp["app"] = app
     dp.update.outer_middleware(TrackingMiddleware(app.chats, app.stats))
     dp.update.outer_middleware(PrivateGateMiddleware(app.settings.owner_ids))
+    dp.update.outer_middleware(ProtectionMiddleware(app.chats, app.protection))
     dp.errors.register(_on_error)
     dp.include_router(moderation.build_router())
     dp.include_router(common.build_router())

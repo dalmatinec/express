@@ -207,7 +207,7 @@ RETURNING id
 """
 
 GET_PUNISHMENT = """
-SELECT p.id, p.user_id, p.kind, p.expires_at, p.revoked_at, u.first_name
+SELECT p.id, p.user_id, p.kind, p.expires_at, p.revoked_at, u.first_name, u.username
 FROM punishments p
 LEFT JOIN users u ON u.id = p.user_id
 WHERE p.id = $1::bigint AND p.bot_id = $2::bigint AND p.chat_id = $3::bigint
@@ -221,7 +221,8 @@ RETURNING id
 """
 
 USER_HISTORY = """
-SELECT p.kind, p.reason, p.created_at, p.expires_at, p.revoked_at, a.first_name AS admin_name
+SELECT p.kind, p.reason, p.created_at, p.expires_at, p.revoked_at,
+       a.first_name AS admin_name, a.username AS admin_username
 FROM punishments p
 LEFT JOIN users a ON a.id = p.admin_id
 WHERE p.bot_id = $1::bigint AND p.chat_id = $2::bigint AND p.user_id = $3::bigint
@@ -231,11 +232,64 @@ LIMIT $4::int
 
 CHAT_JOURNAL = """
 SELECT p.kind, p.user_id, p.reason, p.created_at, p.expires_at, p.revoked_at,
-       t.first_name AS target_name, a.first_name AS admin_name
+       t.first_name AS target_name, t.username AS target_username,
+       a.first_name AS admin_name, a.username AS admin_username
 FROM punishments p
 LEFT JOIN users t ON t.id = p.user_id
 LEFT JOIN users a ON a.id = p.admin_id
 WHERE p.bot_id = $1::bigint AND p.chat_id = $2::bigint
 ORDER BY p.created_at DESC
 LIMIT $3::int
+"""
+
+# --- Белый список ---
+
+WHITELIST_ADD = """
+INSERT INTO chat_whitelist (bot_id, chat_id, user_id, added_by)
+VALUES ($1::bigint, $2::bigint, $3::bigint, $4::bigint)
+ON CONFLICT (bot_id, chat_id, user_id) DO NOTHING
+RETURNING user_id
+"""
+
+WHITELIST_REMOVE = """
+DELETE FROM chat_whitelist
+WHERE bot_id = $1::bigint AND chat_id = $2::bigint AND user_id = $3::bigint
+RETURNING user_id
+"""
+
+WHITELIST_IDS = """
+SELECT user_id FROM chat_whitelist WHERE bot_id = $1::bigint AND chat_id = $2::bigint
+"""
+
+WHITELIST_LIST = """
+SELECT w.user_id, u.first_name, u.username
+FROM chat_whitelist w
+LEFT JOIN users u ON u.id = w.user_id
+WHERE w.bot_id = $1::bigint AND w.chat_id = $2::bigint
+ORDER BY w.created_at
+LIMIT $3::int
+"""
+
+# --- Переезд группы в супергруппу: журнал и белый список ---
+
+MIGRATE_PUNISHMENTS = """
+UPDATE punishments p SET chat_id = $3::bigint
+WHERE p.bot_id = $1::bigint AND p.chat_id = $2::bigint
+  AND NOT (
+    p.revoked_at IS NULL AND p.kind IN ('ban', 'mute') AND EXISTS (
+      SELECT 1 FROM punishments n
+      WHERE n.bot_id = p.bot_id AND n.chat_id = $3::bigint AND n.user_id = p.user_id
+        AND n.kind = p.kind AND n.revoked_at IS NULL
+    )
+  )
+"""
+
+MIGRATE_WHITELIST = """
+WITH moved AS (
+    DELETE FROM chat_whitelist WHERE bot_id = $1::bigint AND chat_id = $2::bigint
+    RETURNING user_id, added_by, created_at
+)
+INSERT INTO chat_whitelist (bot_id, chat_id, user_id, added_by, created_at)
+SELECT $1::bigint, $3::bigint, user_id, added_by, created_at FROM moved
+ON CONFLICT (bot_id, chat_id, user_id) DO NOTHING
 """

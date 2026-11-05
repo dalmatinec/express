@@ -52,6 +52,7 @@ class TelegramActions(Protocol):
 class Person:
     id: int
     name: str
+    username: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,7 +235,9 @@ class Moderation:
         expires = row["expires_at"]
         if row["revoked_at"] is not None or (expires is not None and expires <= self._now()):
             raise ModerationError("already")
-        target = Person(row["user_id"], row["first_name"] or f"ID {row['user_id']}")
+        target = Person(
+            row["user_id"], row["first_name"] or f"ID {row['user_id']}", row["username"]
+        )
         if kind == "ban":
             await tg.unban(chat_id, target.id)
         elif kind == "mute":
