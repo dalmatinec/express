@@ -30,3 +30,36 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - run: ruff check .
       - run: pytest -q
+
+  # Настоящий образ и настоящий Postgres из docker-compose. Токен выдуманный: бот применяет
+  # миграции, Telegram отклоняет токен, и процесс выходит с понятной ошибкой.
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Настройки
+        run: |
+          printf 'BOT_TOKEN=123456:%s\nOWNER_IDS=1\nPOSTGRES_PASSWORD=ci\nSECRET_KEY=ci\n' \
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" > .env
+      - name: Сборка и запуск базы
+        run: docker compose up -d --build --wait db
+      - name: Память после загрузки кода
+        run: >-
+          docker compose run --rm --no-deps bot python -c
+          "import bot.app, bot.runtime, uvloop, orjson; from bot.metrics import rss_mb;
+          print('RSS, MB:', round(rss_mb()))"
+      - name: Запуск бота
+        run: |
+          set +e
+          output=$(timeout 120 docker compose run --rm bot 2>&1)
+          code=$?
+          set -e
+          echo "$output"
+          test "$code" = 1
+          grep -q "Применены миграции" <<<"$output"
+          grep -q "не принял BOT_TOKEN" <<<"$output"
+      - name: Схема в базе
+        run: docker compose exec -T db psql -U modbot -d modbot -c '\dt' | grep punishments
+      - name: Логи при сбое
+        if: failure()
+        run: docker compose logs --no-color

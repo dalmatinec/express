@@ -18,6 +18,7 @@ asyncpg = pytest.importorskip("asyncpg")
 from aiogram import Bot  # noqa: E402
 from aiogram.client.default import DefaultBotProperties  # noqa: E402
 from aiogram.client.session.base import BaseSession  # noqa: E402
+from aiogram.exceptions import TelegramUnauthorizedError  # noqa: E402
 from aiogram.fsm.storage.base import StorageKey  # noqa: E402
 from aiogram.methods import (  # noqa: E402
     BanChatMember,
@@ -25,8 +26,10 @@ from aiogram.methods import (  # noqa: E402
     EditMessageText,
     GetChatAdministrators,
     GetMe,
+    GetUpdates,
     RestrictChatMember,
     SendMessage,
+    SetMyCommands,
     UnbanChatMember,
 )
 from aiogram.types import (  # noqa: E402
@@ -43,6 +46,7 @@ from bot.config import Settings  # noqa: E402
 from bot.db import queries as q  # noqa: E402
 from bot.db.migrate import migrate  # noqa: E402
 from bot.db.pool import Database  # noqa: E402
+from bot.runtime import ALLOWED_UPDATES, BotManager, CloneError  # noqa: E402
 from bot.storage import PgStorage  # noqa: E402
 
 DSN = os.environ.get("TEST_PG_DSN")
@@ -57,14 +61,25 @@ class FakeSession(BaseSession):
     def __init__(self) -> None:
         super().__init__()
         self.sent: list[Any] = []
+        self.updates: dict[int, list[dict[str, Any]]] = {}
+        self.revoked: set[int] = set()
 
     async def close(self) -> None:
         return None
 
     async def make_request(self, bot: Bot, method: Any, timeout: int | None = None) -> Any:
         self.sent.append(method)
+        if bot.id in self.revoked:
+            raise TelegramUnauthorizedError(method=method, message="Unauthorized")
+        if isinstance(method, GetUpdates):
+            queue = self.updates.get(bot.id)
+            if queue:
+                return [Update.model_validate(queue.pop(0), context={"bot": bot})]
+            if method.timeout:
+                await asyncio.sleep(0.01)
+            return []
         if isinstance(method, GetMe):
-            return User(id=BOT_ID, is_bot=True, first_name="Mod", username="mod_bot")
+            return User(id=bot.id, is_bot=True, first_name="Mod", username=f"bot{bot.id}")
         if isinstance(method, GetChatAdministrators):
             owner = User(id=1, is_bot=False, first_name="Owner")
             me = User(id=BOT_ID, is_bot=True, first_name="Mod")
@@ -479,3 +494,188 @@ def test_private_chat_is_closed_for_everyone_except_owner():
         assert env.session.texts()
 
     scenario(body)
+
+
+# --- Запуск ботов ---
+
+CLONE_ID = 654321
+CLONE_TOKEN = f"{CLONE_ID}:{'B' * 35}"
+
+
+def _raw_update(update_id: int, chat_id: int, user_id: int = 5) -> dict[str, Any]:
+    return {
+        "update_id": update_id,
+        "message": {
+            "message_id": update_id,
+            "date": 1_700_000_000,
+            "chat": {"id": chat_id, "type": "supergroup", "title": "Чат"},
+            "from": {"id": user_id, "is_bot": False, "first_name": "Вася"},
+            "text": "привет",
+        },
+    }
+
+
+def _manager(env: Env, **kwargs: Any) -> BotManager:
+    options: dict[str, Any] = {
+        "owner_id": 1,
+        "secret_key": "ключ",
+        "polling_timeout": 1,
+        "max_concurrent_updates": 10,
+        "on_main_fatal": lambda: None,
+        "session": env.session,
+        **kwargs,
+    }
+    return BotManager(env.dp, env.app.db, **options)
+
+
+async def _until(condition: Any) -> None:
+    for _ in range(200):
+        if condition():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("условие не выполнилось вовремя")
+
+
+def test_main_bot_polls_processes_and_confirms_on_stop():
+    async def body(env: Env) -> None:
+        manager = _manager(env)
+        await manager.start(TOKEN)
+        assert any(isinstance(m, SetMyCommands) for m in env.session.sent)
+
+        env.session.updates[BOT_ID] = [_raw_update(10, CHAT_ID), _raw_update(11, CHAT_ID)]
+        await _until(lambda: env.app.stats.pending >= 2 and not env.session.updates[BOT_ID])
+        await _until(lambda: manager.in_flight == 0)
+        await manager.stop()
+
+        await env.app.stats.flush()
+        assert await env.app.db.fetchval(q.MEMBER_COUNT_IN_CHAT, BOT_ID, CHAT_ID, 5) == 2
+        last = [m for m in env.session.sent if isinstance(m, GetUpdates)][-1]
+        assert (last.offset, last.timeout) == (12, 0)
+        assert last.allowed_updates == ALLOWED_UPDATES
+
+    scenario(body)
+
+
+def test_clone_runs_with_separate_data_and_encrypted_token():
+    async def body(env: Env) -> None:
+        manager = _manager(env)
+        await manager.start(TOKEN)
+        me = await manager.add_clone(CLONE_TOKEN, owner_id=42)
+        assert me.id == CLONE_ID and manager.running_count == 2
+
+        row = await env.app.db.fetchrow(
+            "SELECT owner_id, token_enc, is_main FROM bots WHERE id = $1", CLONE_ID
+        )
+        assert row["owner_id"] == 42 and not row["is_main"]
+        assert CLONE_TOKEN.encode() not in bytes(row["token_enc"])
+
+        env.session.updates[CLONE_ID] = [_raw_update(1, CHAT_ID)]
+        await _until(lambda: not env.session.updates[CLONE_ID] and manager.in_flight == 0)
+        await _until(lambda: env.app.stats.pending > 0)
+        await manager.stop()
+        await env.app.stats.flush()
+
+        assert await env.app.db.fetchval(q.MEMBER_COUNT_IN_CHAT, CLONE_ID, CHAT_ID, 5) == 1
+        assert await env.app.db.fetchval(q.MEMBER_COUNT_IN_CHAT, BOT_ID, CHAT_ID, 5) is None
+        assert await env.app.chats.count_active(CLONE_ID) == 1
+        assert await env.app.chats.count_active(BOT_ID) == 0
+
+    scenario(body)
+
+
+def test_clone_restarts_after_restart_unless_removed():
+    async def body(env: Env) -> None:
+        first = _manager(env)
+        await first.start(TOKEN)
+        await first.add_clone(CLONE_TOKEN, owner_id=42)
+        await first.stop()
+
+        second = _manager(env)
+        await second.start(TOKEN)
+        assert second.running_count == 2
+        await second.remove_clone(CLONE_ID)
+        assert second.running_count == 1
+        await second.stop()
+
+        third = _manager(env)
+        await third.start(TOKEN)
+        assert third.running_count == 1
+        await third.stop()
+
+    scenario(body)
+
+
+def test_clone_add_rejects_bad_requests():
+    async def body(env: Env) -> None:
+        manager = _manager(env)
+        await manager.start(TOKEN)
+        with pytest.raises(CloneError, match="не похоже"):
+            await manager.add_clone("это не токен", owner_id=42)
+        with pytest.raises(CloneError, match="уже подключён"):
+            await manager.add_clone(TOKEN, owner_id=42)
+        env.session.revoked.add(CLONE_ID)
+        with pytest.raises(CloneError, match="не принял"):
+            await manager.add_clone(CLONE_TOKEN, owner_id=42)
+        with pytest.raises(CloneError, match="Основного"):
+            await manager.remove_clone(BOT_ID)
+        assert manager.running_count == 1
+        await manager.stop()
+
+    scenario(body)
+
+
+def test_clones_need_secret_key():
+    async def body(env: Env) -> None:
+        manager = _manager(env, secret_key=None)
+        await manager.start(TOKEN)
+        with pytest.raises(CloneError, match="SECRET_KEY"):
+            await manager.add_clone(CLONE_TOKEN, owner_id=42)
+        await manager.stop()
+
+    scenario(body)
+
+
+def test_revoked_clone_stops_alone_and_is_marked():
+    async def body(env: Env) -> None:
+        manager = _manager(env)
+        await manager.start(TOKEN)
+        await manager.add_clone(CLONE_TOKEN, owner_id=42)
+        env.session.revoked.add(CLONE_ID)
+        await _until(lambda: manager.running_count == 1)
+        status = await env.app.db.fetchval("SELECT status FROM bots WHERE id = $1", CLONE_ID)
+        assert status == "revoked"
+        assert manager.is_main(BOT_ID)
+        await manager.stop()
+
+    scenario(body)
+
+
+def test_revoked_main_token_asks_process_to_stop():
+    async def body(env: Env) -> None:
+        stopped = asyncio.Event()
+        manager = _manager(env, on_main_fatal=stopped.set)
+        await manager.start(TOKEN)
+        env.session.revoked.add(BOT_ID)
+        await asyncio.wait_for(stopped.wait(), 3)
+        await manager.stop()
+
+    scenario(body)
+
+
+def test_wrong_main_token_fails_at_start():
+    async def body(env: Env) -> None:
+        env.session.revoked.add(BOT_ID)
+        with pytest.raises(TelegramUnauthorizedError):
+            await _manager(env).start(TOKEN)
+
+    scenario(body)
+
+
+def test_entry_point_reports_missing_settings(monkeypatch, tmp_path, capsys):
+    from bot.__main__ import main
+
+    for name in ("BOT_TOKEN", "OWNER_IDS", "DATABASE_URL"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.chdir(tmp_path)
+    assert main() == 2
+    assert "BOT_TOKEN" in capsys.readouterr().err
