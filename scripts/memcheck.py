@@ -39,40 +39,17 @@ for i in range(50):
 assert u.message.reply_to_message.from_user.id == 2 and d['reply_markup'] is not None
 """
 
-TRIM = """
-import gc, ctypes
-gc.collect(); ctypes.CDLL('libc.so.6').malloc_trim(0)
-"""
-
-DROP = """
-import gc, sys, pydantic
-def _walk(c):
-    for s in c.__subclasses__():
-        yield s
-        yield from _walk(s)
-n = 0
-for c in set(_walk(pydantic.BaseModel)):
-    for a in ('__pydantic_core_schema__',):
-        if a in c.__dict__:
-            try:
-                delattr(c, a); n += 1
-            except Exception: pass
-"""
-
+LEAN = "import bot.lean; assert bot.lean.install()\n"
 BASE = "import bot.app, bot.runtime\n"
 
 CASES = {
-    "бот": BASE,
-    "бот + работа": BASE + USE,
-    "gc+trim": BASE + TRIM,
-    "gc+trim + работа": BASE + TRIM + USE,
-    "gc+trim + работа + trim": BASE + TRIM + USE + TRIM,
-    "убрать схемы+trim": BASE + DROP + TRIM,
-    "убрать схемы+trim + работа": BASE + DROP + TRIM + USE,
-    "убрать схемы+trim + работа + trim": BASE + DROP + TRIM + USE + TRIM,
+    "обычная загрузка": BASE,
+    "обычная загрузка + работа": BASE + USE,
+    "экономная загрузка": LEAN + BASE,
+    "экономная загрузка + работа": LEAN + BASE + USE,
 }
 
-ENVS = {"": {}, "PYTHONMALLOC=malloc ": {"PYTHONMALLOC": "malloc"}}
+ENVS = {"": {}}
 
 for prefix, extra in ENVS.items():
     for name, code in CASES.items():
