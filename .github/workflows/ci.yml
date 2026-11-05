@@ -43,11 +43,8 @@ jobs:
             "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" > .env
       - name: Сборка и запуск базы
         run: docker compose up -d --build --wait db
-      - name: Память после загрузки кода
-        run: >-
-          docker compose run --rm --no-deps bot python -c
-          "import bot.app, bot.runtime, uvloop, orjson; from bot.metrics import rss_mb;
-          print('RSS, MB:', round(rss_mb()))"
+      - name: Память по слоям
+        run: docker compose run --rm --no-deps -v "$PWD/scripts:/app/scripts:ro" bot python scripts/memcheck.py
       - name: Запуск бота
         run: |
           set +e
