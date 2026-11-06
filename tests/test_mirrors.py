@@ -215,6 +215,8 @@ class Mirrors(MirrorBase):
         await h.click(USER, "mir")
         self.assertIn("@links2001_bot", h.user_screen(USER).text)
         self.assertIn("работает", h.user_screen(USER).text)
+        urls = [b.url for row in h.user_screen(USER).markup.inline_keyboard for b in row if b.url]
+        self.assertEqual(urls, ["https://t.me/links2001_bot"], "есть кнопка перехода в зеркало")
 
         await h.click(USER, "mirr")
         await h.send(USER, TOKEN(2002))

@@ -152,12 +152,16 @@ MIRROR_HELP = (
 
 
 async def my_mirror_view(app: App, user_id: int) -> tuple[str, object]:
-    lines = []
+    lines, open_rows = [], []
     for m in await app.mirrors.of_owner(user_id):
         state = "работает" if m["running"] else "не работает (токен отозван или бот удалён)"
         lines.append(f"@{m['username']}: {state}")
+        if m["running"]:
+            open_rows.append([InlineKeyboardButton(text=f"↗️ Открыть @{m['username']}",
+                                                   url=f"https://t.me/{m['username']}")])
     html = "🪞 <b>Ваше зеркало</b>\n\n" + "\n".join(lines)
     kb = markup([
+        *open_rows,
         [InlineKeyboardButton(text="🔄 Заменить токен", callback_data="mirr")],
         [InlineKeyboardButton(text="🗑 Удалить зеркало", callback_data="mird")],
         [InlineKeyboardButton(text="‹ Назад", callback_data="m")],
@@ -233,8 +237,10 @@ async def in_mirror_token(message: Message, state: FSMContext, app: App) -> None
         await show(app, user.id, chat_id, f"❌ {e}\n\nПришлите токен ещё раз или вернитесь в меню.", None, back)
         return
     await state.set_state(None)
+    done = markup([[InlineKeyboardButton(text=f"↗️ Открыть @{mirror.username}", url=f"https://t.me/{mirror.username}")],
+                   [InlineKeyboardButton(text="‹ В меню", callback_data="m")]])
     await show(app, user.id, chat_id, f"✅ Зеркало <b>@{mirror.username}</b> запущено. Откройте его и нажмите /start.",
-               None, back)
+               None, done)
 
 
 def build_router(name: str = "user") -> Router:
