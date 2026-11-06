@@ -1,15 +1,16 @@
 """Фейковый Telegram Bot API для тестов: запоминает запросы и состояние чатов."""
+import asyncio
 import itertools
 from dataclasses import dataclass, field
 from typing import Any
 
 from aiogram import Bot
 from aiogram.client.session.base import BaseSession
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramUnauthorizedError
 from aiogram.methods import (
     AnswerCallbackQuery, ApproveChatJoinRequest, CopyMessage, CreateChatInviteLink, DeclineChatJoinRequest, DeleteMessage,
     EditChatInviteLink,
-    EditMessageMedia, EditMessageText, ForwardMessage, GetChatMember, GetFile, GetMe, RevokeChatInviteLink,
+    EditMessageMedia, EditMessageText, ForwardMessage, GetChatMember, GetFile, GetMe, GetUpdates, RevokeChatInviteLink,
     SendAnimation, SendDocument, SendMessage, SendPhoto, SendVideo, SetMyCommands, TelegramMethod,
 )
 from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
@@ -48,6 +49,7 @@ class FakeTelegram(BaseSession):
     premium_ok: bool = False  # может ли бот показывать премиум-эмодзи (как решает Telegram)
     approved: list[tuple[int, int]] = field(default_factory=list)
     declined: list[tuple[int, int]] = field(default_factory=list)
+    unauthorized: bool = False  # токен бота отозван или бот заблокирован: на любой запрос Unauthorized
 
     def __post_init__(self) -> None:
         BaseSession.__init__(self)
@@ -98,6 +100,11 @@ class FakeTelegram(BaseSession):
 
     async def make_request(self, bot: Bot, method: TelegramMethod, timeout: int | None = None) -> Any:
         self.calls.append(method)
+        if self.unauthorized:
+            raise TelegramUnauthorizedError(method, "Unauthorized")
+        if isinstance(method, GetUpdates):
+            await asyncio.sleep(0.02)  # длинный опрос без новостей
+            return []
         if isinstance(method, GetMe):
             return User(id=self.bot_id, is_bot=True, first_name="Links", username=f"links{self.bot_id}_bot")
         if isinstance(method, (SetMyCommands, AnswerCallbackQuery)):

@@ -17,6 +17,7 @@ from bot.handlers.admin import people
 from bot.handlers.admin import router as admin_router
 from bot.handlers.admin.core import admin_screens
 from bot.handlers.chats import router as chats_router
+from bot.handlers.mirror_admin import router as mirror_admin_router
 from bot.handlers.user import router as user_router
 from bot.store import now
 
@@ -41,7 +42,7 @@ class Harness:
         self.config = Config(bot_token="x", owner_ids=frozenset({OWNER}), data_dir=tmp, log_level="INFO")
 
     async def start(self) -> "Harness":
-        for router in (chats_router, admin_router, user_router):  # роутеры - модульные синглтоны
+        for router in (chats_router, mirror_admin_router, admin_router, user_router):  # роутеры - модульные синглтоны
             router._parent_router = None
         admin_screens.clear()
         self.app, self.dp, self.guard = await setup(self.config, self.bot)
@@ -665,6 +666,11 @@ class Performance(Base):
             "joins": "SELECT COUNT(*) FROM joins WHERE item_id = 1 AND ts > 5",
             "ad_users": "SELECT ad_id FROM ad_users WHERE user_id = 1 AND ad_id IN (1, 2)",
             "users_seen": "SELECT COUNT(*) FROM users WHERE last_seen > 5",
+            "mirror_audience": ("SELECT user_id FROM user_bots WHERE bot_id IN (1, 2) AND is_blocked = 0 "
+                                "AND last_seen > 5"),
+            "mirror_owner": "SELECT bot_id FROM mirrors WHERE owner_id = 1",
+            "reserve_ready": "SELECT bot_id FROM reserve_tokens WHERE status = 'ready' ORDER BY position",
+            "user_main": "SELECT 1 FROM user_bots WHERE user_id = 1 AND bot_id = 2",
         }
         for name, sql in plans.items():
             plan = " ".join(r[3] for r in await db.fetchall("EXPLAIN QUERY PLAN " + sql))

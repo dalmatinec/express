@@ -35,6 +35,7 @@ PERMS: dict[str, str] = {
     "texts": "📝 Тексты",
     "stats": "📊 Статистика",
     "users": "👥 Пользователи",
+    "mirrors": "🪞 Зеркала и запасные",
     "settings": "⚙️ Настройки",
     "backup": "💾 Бэкап",
     "admins": "👮 Админы",
@@ -532,6 +533,7 @@ async def view_home(ctx: Ctx) -> ViewResult:
         ("broadcast", "📣 Рассылка", "a:bc"),
         ("stats", "📊 Статистика", "a:stats"),
         ("users", "👥 Пользователи", "a:users"),
+        ("mirrors", "🪞 Зеркала", "a:mir"),
     ]
     btns = [b(t, cb) for p, t, cb in sections if "*" in perms or p in perms]
     rows = [btns[i:i + 2] for i in range(0, len(btns), 2)]

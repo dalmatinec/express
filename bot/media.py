@@ -47,12 +47,14 @@ class MediaStore:
         self.dir = media_dir
         self.bot_id = 0
         self.files: dict[int, MediaFile] = {}
-        self.file_ids: dict[int, str] = {}
+        self.file_ids: dict[int, str] = {}                 # file_id основного бота
+        self._extra: dict[int, dict[int, str]] = {}        # file_id зеркал: bot_id -> {media_id: file_id}
         self.on_missing: Callable[[int], Awaitable[None]] | None = None
         self._reported_missing: set[int] = set()
 
     async def load(self, bot_id: int) -> None:
         self.bot_id = bot_id
+        self._extra = {}
         self.dir.mkdir(parents=True, exist_ok=True)
         self.files = {
             r["id"]: MediaFile(r["id"], self.dir / r["path"], r["kind"], r["size"])
@@ -62,6 +64,17 @@ class MediaStore:
             r["media_id"]: r["file_id"]
             for r in await self.db.fetchall("SELECT media_id, file_id FROM media_file_ids WHERE bot_id = ?", (bot_id,))
         }
+
+    async def _ids(self, bot_id: int) -> dict[int, str]:
+        """file_id для конкретного бота: у основного свои, у каждого зеркала свои."""
+        if bot_id == self.bot_id:
+            return self.file_ids
+        ids = self._extra.get(bot_id)
+        if ids is None:
+            ids = {r["media_id"]: r["file_id"] for r in await self.db.fetchall(
+                "SELECT media_id, file_id FROM media_file_ids WHERE bot_id = ?", (bot_id,))}
+            self._extra[bot_id] = ids
+        return ids
 
     def get(self, media_id: int | None) -> MediaFile | None:
         return self.files.get(media_id) if media_id else None
@@ -87,7 +100,7 @@ class MediaStore:
                 return await bot.send_animation(chat_id, animation=src, **common)
             return await bot.send_video(chat_id, video=src, supports_streaming=True, **common)
 
-        return await self._run(m, call)
+        return await self._run(m, call, bot.id)
 
     async def edit(
         self, bot: Bot, chat_id: int, message_id: int, media_id: int, caption: str,
@@ -108,10 +121,12 @@ class MediaStore:
             assert isinstance(result, Message)
             return result
 
-        return await self._run(m, call)
+        return await self._run(m, call, bot.id)
 
-    async def _run(self, m: MediaFile, call: Callable[[str | FSInputFile], Awaitable[Message]]) -> Message | None:
-        file_id = self.file_ids.get(m.id)
+    async def _run(self, m: MediaFile, call: Callable[[str | FSInputFile], Awaitable[Message]],
+                   bot_id: int) -> Message | None:
+        ids = await self._ids(bot_id)
+        file_id = ids.get(m.id)
         if file_id is not None:
             try:
                 msg = await call(file_id)
@@ -120,27 +135,28 @@ class MediaStore:
                 if not _is_file_error(e):
                     raise
                 log.warning("file_id медиа %s не принят (%s), заливаю с диска", m.id, e.message)
-                await self._forget(m.id)
+                await self._forget(m.id, bot_id)
         if not m.path.exists():
             await self._report_missing(m.id)
             return None
         msg = await call(FSInputFile(m.path))
-        await self._remember(m, msg)
+        await self._remember(m, msg, bot_id)
         return msg
 
-    async def _remember(self, m: MediaFile, msg: Message) -> None:
+    async def _remember(self, m: MediaFile, msg: Message, bot_id: int) -> None:
         file_id = _extract_file_id(msg, m.kind)
-        if file_id and self.file_ids.get(m.id) != file_id:
-            self.file_ids[m.id] = file_id
+        ids = await self._ids(bot_id)
+        if file_id and ids.get(m.id) != file_id:
+            ids[m.id] = file_id
             await self.db.execute(
                 "INSERT OR REPLACE INTO media_file_ids(media_id, bot_id, file_id) VALUES (?, ?, ?)",
-                (m.id, self.bot_id, file_id),
+                (m.id, bot_id, file_id),
             )
 
-    async def _forget(self, media_id: int) -> None:
-        self.file_ids.pop(media_id, None)
+    async def _forget(self, media_id: int, bot_id: int) -> None:
+        (await self._ids(bot_id)).pop(media_id, None)
         await self.db.execute(
-            "DELETE FROM media_file_ids WHERE media_id = ? AND bot_id = ?", (media_id, self.bot_id)
+            "DELETE FROM media_file_ids WHERE media_id = ? AND bot_id = ?", (media_id, bot_id)
         )
 
     async def _report_missing(self, media_id: int) -> None:
@@ -216,6 +232,8 @@ class MediaStore:
         m = self.files[media_id]
         m.kind = kind
         self.file_ids.pop(media_id, None)
+        for ids in self._extra.values():
+            ids.pop(media_id, None)
         await self.db.execute("UPDATE media SET kind = ? WHERE id = ?", (kind, media_id))
         await self.db.execute("DELETE FROM media_file_ids WHERE media_id = ?", (media_id,))
 
@@ -229,6 +247,8 @@ class MediaStore:
         for r in rows:
             m = self.files.pop(r["id"], None)
             self.file_ids.pop(r["id"], None)
+            for ids in self._extra.values():
+                ids.pop(r["id"], None)
             await self.db.execute("DELETE FROM media WHERE id = ?", (r["id"],))
             if m is not None:
                 m.path.unlink(missing_ok=True)

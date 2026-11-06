@@ -5,7 +5,7 @@ from aiogram.types import Message
 
 from ...app import App
 from ...richtext import parse_contacts
-from ...services.broadcast import AUDIENCES
+from ...services.broadcast import AUDIENCES, Snapshot
 from ...store import now
 from ...ui import button, grid, markup, paginate
 from .core import PERMS, Ctx, InputError, Rows, ViewResult, action, b, back_btn, fmt_date, on_input, view
@@ -223,7 +223,7 @@ async def view_broadcast(ctx: Ctx) -> ViewResult:
         pct = cur.done * 100 // max(1, cur.total)
         html = f"📣 <b>Идёт рассылка</b>: {pct}%\n\n{cur.summary()}"
         return html, [[b("🔄 Обновить", "a:bc"), b("⛔️ Остановить", "x:bcstop", "danger")], back_btn("a:home")]
-    count = len(await br.audience("all"))
+    count = await br.count("all")
     html = f"📣 <b>Рассылка</b>\n\nПолучателей: <b>{count}</b>"
     if cur is not None and cur.finished:
         html += f"\n\n<b>Прошлая рассылка:</b>\n{cur.summary()}"
@@ -238,7 +238,7 @@ async def act_broadcast_new(ctx: Ctx):
 
 @on_input("bcnew", "broadcast")
 async def in_broadcast(ctx: Ctx, message: Message):
-    drafts[ctx.user_id] = {"msg": message.message_id, "buttons": [], "aud": "all"}
+    drafts[ctx.user_id] = {"msg": message.message_id, "buttons": [], "aud": "all", "snap": Snapshot.from_message(message)}
     return "a:bcc"
 
 
@@ -251,7 +251,8 @@ async def act_broadcast_forward(ctx: Ctx):
 async def in_broadcast_forward(ctx: Ctx, message: Message):
     if message.media_group_id:
         raise InputError("Альбомы не поддерживаются, перешли один пост.")
-    drafts[ctx.user_id] = {"msg": message.message_id, "buttons": [], "aud": "all", "forward": True}
+    drafts[ctx.user_id] = {"msg": message.message_id, "buttons": [], "aud": "all", "forward": True,
+                              "snap": Snapshot.from_message(message)}
     return "a:bcc"
 
 
@@ -267,7 +268,7 @@ async def view_broadcast_confirm(ctx: Ctx) -> ViewResult:
     draft = drafts.get(ctx.user_id)
     if draft is None:
         return await view_broadcast(ctx)
-    count = len(await ctx.app.broadcaster.audience(draft["aud"]))
+    count = await ctx.app.broadcaster.count(draft["aud"])
     forward = bool(draft.get("forward"))
     info = "" if forward else f"\nКнопок: <b>{len(draft['buttons'])}</b>"
     html = f"☝️ Сообщение выше получат <b>{count}</b> пользователей.{info}"
@@ -333,8 +334,10 @@ async def act_broadcast_go(ctx: Ctx):
     if draft is None or br.running:
         return "a:bc"
     ids = await br.audience(draft["aud"])
-    br.start(ctx.user_id, ctx.chat_id, draft["msg"], ids, _draft_kb(draft), forward=bool(draft.get("forward")))
-    await ctx.log("broadcast.start", f"{len(ids)} получателей")
+    mirror_ids = await br.mirror_audience(draft["aud"])
+    br.start(ctx.user_id, ctx.chat_id, draft["msg"], ids, _draft_kb(draft), forward=bool(draft.get("forward")),
+             snap=draft.get("snap"), mirror_ids=mirror_ids)
+    await ctx.log("broadcast.start", f"{len(ids) + len(mirror_ids)} получателей")
     ctx.notice = "🚀 Рассылка запущена. Пришлю отчёт, когда закончится."
     return "a:bc"
 

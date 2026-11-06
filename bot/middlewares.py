@@ -35,6 +35,7 @@ class GuardMiddleware(BaseMiddleware):
 
         app = self.app
         await app.touch_user(user.id, user.username, user.first_name)
+        await app.touch_user_bot(user.id, app.bot.id)
         perms = app.perms(user.id)
         data["perms"] = perms
         if perms is None:

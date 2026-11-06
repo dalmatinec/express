@@ -84,7 +84,7 @@ class LinkService:
         else:
             kwargs["member_limit"] = 1
         try:
-            invite = await self.app.bot.create_chat_invite_link(**kwargs)
+            invite = await self.app.main_bot.create_chat_invite_link(**kwargs)
         except TelegramRetryAfter as e:
             raise LinkBusy(f"флуд-контроль, {e.retry_after} с") from e
         except (TelegramForbiddenError, TelegramBadRequest) as e:
@@ -158,11 +158,10 @@ class LinkService:
         return len(rows)
 
     async def revoke_worker(self) -> None:
-        bot = self.app.bot
         while True:
             chat_id, link = await self.revoke_queue.get()
             try:
-                await bot.revoke_chat_invite_link(chat_id, link)
+                await self.app.main_bot.revoke_chat_invite_link(chat_id, link)
             except TelegramRetryAfter as e:
                 self.revoke_queue.put_nowait((chat_id, link))
                 await asyncio.sleep(e.retry_after + 1)
@@ -240,14 +239,14 @@ class LinkService:
         if row is None:
             return
         item = self.app.store.items.get(row["item_id"])
-        await self.app.bot.edit_chat_invite_link(chat_id, row["link"], name=item.label[:32] if item else None)
+        await self.app.main_bot.edit_chat_invite_link(chat_id, row["link"], name=item.label[:32] if item else None)
 
     async def check_chats(self) -> None:
         """Проверка всех чатов без создания новых ссылок: есть ли бот и права, а в чатах с запасом ссылок
         ещё и настоящее действие: пересохранить одну готовую ссылку с тем же названием.
         Так ловятся и удалённые, и замороженные чаты, о которых Telegram ничего не присылает.
         Сбои сети и сервера Telegram чат мёртвым не делают: проверим в следующий раз."""
-        bot = self.app.bot
+        bot = self.app.main_bot
         for chat in list(self.app.store.chats.values()):
             try:
                 me = await bot.get_chat_member(chat.id, bot.id)

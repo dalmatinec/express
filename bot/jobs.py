@@ -17,6 +17,7 @@ log = logging.getLogger(__name__)
 TICK = 30
 MAINTENANCE_EVERY = 60
 CHAT_CHECK_EVERY = 15 * 60
+RESERVE_CHECK_EVERY = 60 * 60
 LOG_KEEP_DAYS = 90
 SEND_LIMIT = 49 * 1024 * 1024  # бот может отправить файл до 50 МБ
 
@@ -28,14 +29,20 @@ async def run_jobs(app: App, guard: GuardMiddleware) -> None:
         ticks += TICK
         try:
             await app.flush()
+            if app.backup_due and now() >= app.backup_due:
+                app.backup_due = 0
+                await send_backup(app, "💾 Бэкап после изменений", with_media=False)
             if ticks % MAINTENANCE_EVERY == 0:
                 guard.cleanup()
                 await app.links.cleanup()
                 await app.ads.check_schedule()
                 await expire_bans(app)
                 await daily(app)
+                await daily_summary(app)
             if ticks % CHAT_CHECK_EVERY == 0:
                 await app.links.check_chats()
+            if ticks % RESERVE_CHECK_EVERY == 0 and app.reserves is not None and app.reserves.enabled:
+                await app.reserves.health_check()
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -63,9 +70,49 @@ async def daily(app: App) -> None:
         log.info("Удалено неиспользуемых медиа: %s", removed)
 
 
-async def send_backup(app: App, caption: str) -> str:
+async def summary_text(app: App) -> str:
+    db = app.db
+    since = now() - 86400
+    users = await db.fetchval("SELECT COUNT(*) FROM users")
+    new = await db.fetchval("SELECT COUNT(*) FROM users WHERE created_at >= ?", (since,))
+    active = await db.fetchval("SELECT COUNT(*) FROM users WHERE last_seen >= ?", (since,))
+    lines = ["📊 <b>Сводка за сутки</b>", "",
+             f"Людей всего: <b>{users}</b>, новых: <b>{new}</b>, заходили: <b>{active}</b>"]
+    if app.mirrors is not None and app.mirrors.enabled:
+        per_bot = await db.fetchall(
+            "SELECT bot_id, COUNT(*) AS n FROM user_bots WHERE is_blocked = 0 GROUP BY bot_id")
+        main_n = sum(r["n"] for r in per_bot if r["bot_id"] == app.main_bot.id)
+        mirror_n = sum(r["n"] for r in per_bot if r["bot_id"] != app.main_bot.id)
+        listing = await app.mirrors.listing()
+        alive = sum(1 for m in listing if m.get("running"))
+        lines.append(f"Через основного бота: <b>{main_n}</b>, через зеркала: <b>{mirror_n}</b>")
+        lines.append(f"Зеркал работает: <b>{alive}</b> из {len(listing)}")
+        reserves = await app.reserves.listing()
+        ready = sum(1 for r in reserves if r.status == "ready")
+        warn = " ⚠️ запасных нет, добавьте в веб-панели" if ready == 0 else ""
+        lines.append(f"Запасных токенов готово: <b>{ready}</b>{warn}")
+    lines.append(f"Готовых ссылок в запасе: <b>{sum(app.links.pool_counts.values())}</b>")
+    return "\n".join(lines)
+
+
+async def daily_summary(app: App) -> None:
+    s = app.store.setting
+    local = datetime.now(timezone(timedelta(hours=int(s("tz_offset", 3)))))
+    today = local.strftime("%Y-%m-%d")
+    if local.hour < int(s("summary_hour", 9)) or s("last_summary_day", "") == today:
+        return
+    await app.set_setting("last_summary_day", today)
+    text = await summary_text(app)
+    for uid in sorted(app.config.owner_ids):
+        try:
+            await app.main_bot.send_message(uid, text, disable_notification=True)
+        except TelegramAPIError as e:
+            log.warning("Сводку не доставить %s: %s", uid, e)
+
+
+async def send_backup(app: App, caption: str, with_media: bool = True) -> str:
     """Бэкап на сервер (там лежат 3 последних) + копия в канал логов, а без канала - владельцам."""
-    path = await make_backup(app)
+    path = await make_backup(app, with_media)
     size = f"{path.stat().st_size / 1048576:.1f} МБ"
     on_server = f"На сервере: <code>{escape(str(path.parent.resolve()))}</code>"
     if path.stat().st_size > SEND_LIMIT:
