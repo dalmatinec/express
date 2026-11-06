@@ -1,0 +1,39 @@
+{
+  "settings": {
+    "pool_size": 5,
+    "cleanup_hours": 24,
+    "auto_approve": 0,
+    "notify_link_change": 1,
+    "ads_enabled": 1,
+    "ad_gap_minutes": 10,
+    "clean_chat": 1,
+    "protect_content": 0,
+    "flood_limit": 8,
+    "flood_window": 3,
+    "flood_strikes": 5,
+    "flood_ban_minutes": 30,
+    "tz_offset": 3,
+    "backup_hour": 4,
+    "max_media_mb": 10,
+    "log_chat_id": 0,
+    "log_admin_actions": 1
+  },
+  "texts": {
+    "start": "👋 Привет, {имя}!\n\nВыбери, куда хочешь попасть 👇",
+    "empty_menu": "Скоро здесь появятся ссылки - загляни чуть позже.",
+    "link_one_time": "🔗 <b>{кнопка}</b>\n\nТвоя личная ссылка готова. Она одноразовая - сработает только для тебя.",
+    "link_request": "🔗 <b>{кнопка}</b>\n\nНажми Вступить и отправь заявку. Её рассмотрят админы канала.",
+    "link_ttl": "⏳ Ссылка действует ещё {время}.",
+    "unavailable": "⏳ Этот раздел временно недоступен, загляни чуть позже.",
+    "busy": "Сейчас очень много желающих, попробуй через минуту 🙏",
+    "banned": "🚫 Доступ ограничен.",
+    "flood": "🐢 Не так быстро!",
+    "link_sent": "👇 Ссылка уже в чате, листай ниже",
+    "links_updated": "🔄 Наши ссылки на {кнопки} обновлены.\nНажмите /start, чтобы получить новые."
+  },
+  "buttons": {
+    "join": {"label": "🚀 Вступить", "style": "success"},
+    "back": {"label": "◀️ Назад"},
+    "close": {"label": "✖️ Закрыть"}
+  }
+}
