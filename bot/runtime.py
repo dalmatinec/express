@@ -237,7 +237,7 @@ async def pick_main_token(config: Config, factory: Callable[[str], Bot]) -> str:
             await bot.get_me()
             return token
         except TelegramUnauthorizedError:
-            log.warning("Токен бота %s не принят Telegram, пробую следующий", token_bot_id(token))
+            log.warning("Токен бота %s не принят Telegram, пробую следующий", token.split(":")[0])
         except TelegramAPIError:
             return token  # сеть или Telegram недоступны: дальше разберётся обычный запуск
     return config.bot_token
