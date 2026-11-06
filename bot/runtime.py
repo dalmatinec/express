@@ -141,6 +141,11 @@ class MainRunner:
             await app.db.execute("UPDATE invite_links SET revoked = 1 WHERE user_id IS NULL AND revoked = 0")
             app.links.pool_counts.clear()
             app.links.wake.set()
+            # Номера сообщений старого бота к новому не относятся: иначе удалим по ним чужое сообщение.
+            app.screens.clear()
+            app.link_msgs.clear()
+            app._screen_ids.clear()
+            await app.db.execute("UPDATE users SET screen_msg_id = NULL")
             self.state.down = False
             info = FailoverInfo(now(), old_username, app.bot_username, reason, manual)
             self.state.last = info

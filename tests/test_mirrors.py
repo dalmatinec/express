@@ -238,10 +238,14 @@ class Failover(MirrorBase):
         await h.mirror_send(2001, OTHER, "/start")
         reserve, problems = await app.reserves.add(TOKEN(3001))
         self.assertEqual((reserve.username, problems), ("links3001_bot", []))
+        await h.send(USER, "/start")
+        self.assertIn(USER, app.screens)
         h.start_runner()
 
         self.tg.unauthorized = True  # основной бот заблокирован
         await h.wait_for(lambda: app.main_bot.id == 3001)
+        await h.wait_for(lambda: not h.runner.state.down and USER not in app.screens)
+        self.assertEqual(len(app.link_msgs), 0, "номера сообщений старого бота забыты")
         self.assertEqual(app.bot_username, "links3001_bot")
         row = await app.db.fetchone("SELECT status FROM reserve_tokens WHERE bot_id = 3001")
         self.assertEqual(row["status"], "active")

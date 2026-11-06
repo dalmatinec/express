@@ -133,13 +133,18 @@ class MirrorManager:
     async def start_all(self) -> None:
         if not self.enabled:
             return
+        broken = 0
         for r in await self.app.db.fetchall("SELECT bot_id, token_enc FROM mirrors WHERE status = 'active'"):
             try:
                 token = self.app.cipher.decrypt(r["token_enc"])  # type: ignore[union-attr]
             except Exception:
                 log.error("Не удалось расшифровать токен зеркала %s: SECRET_KEY другой?", r["bot_id"])
+                broken += 1
                 continue
             await self._start(self.factory(token))
+        if broken:
+            await self.app.alert(f"⚠️ Не удалось расшифровать токены зеркал ({broken}): SECRET_KEY в .env не тот, "
+                                 "которым они были сохранены. Верните прежний ключ и перезапустите бот.")
 
     async def _start(self, bot: Bot) -> None:
         bot_id = bot.id

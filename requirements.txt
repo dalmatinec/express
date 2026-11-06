@@ -2,3 +2,5 @@ aiogram==3.31.0
 aiosqlite==0.22.1
 # необязательно, но быстрее (Linux/macOS):
 uvloop>=0.19; sys_platform != "win32"
+# шифрование токенов зеркал и запасных ботов
+cryptography>=42
