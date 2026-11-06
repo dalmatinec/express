@@ -48,7 +48,12 @@ NGINX
         exit 1
     fi
     systemctl reload nginx
-    certbot --nginx -d "$HOST" --non-interactive --agree-tos --register-unsafely-without-email --redirect
+    if ! certbot --nginx -d "$HOST" --non-interactive --agree-tos --register-unsafely-without-email --redirect; then
+        rm -f "/etc/nginx/sites-enabled/$NAME-panel.conf"
+        systemctl reload nginx
+        echo "Не удалось выпустить сертификат, сайт панели убран (без HTTPS пароли передавались бы открыто). Остальные сайты не тронуты."
+        exit 1
+    fi
     nginx -t && systemctl reload nginx
 elif [ "$PORT_BUSY" = 1 ] && ! pgrep -x caddy >/dev/null; then
     echo "Порты 80/443 заняты не nginx и не Caddy. Освободите их или подключите панель к этой программе вручную."
