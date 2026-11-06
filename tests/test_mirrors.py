@@ -204,6 +204,44 @@ class Mirrors(MirrorBase):
         await app.mirrors.add(TOKEN(2006), OWNER)
         await app.mirrors.add(TOKEN(2007), OWNER)
 
+    async def test_my_mirror_screen_replace_and_delete(self):
+        h, app = self.h, self.app
+        await h.send(USER, "/start")
+        await h.click(USER, "mir")
+        await h.send(USER, TOKEN(2001))
+        await h.send(USER, "/start")
+        labels = [b.text for row in h.user_screen(USER).markup.inline_keyboard for b in row]
+        self.assertIn("🪞 Моё зеркало", labels)
+        await h.click(USER, "mir")
+        self.assertIn("@links2001_bot", h.user_screen(USER).text)
+        self.assertIn("работает", h.user_screen(USER).text)
+
+        await h.click(USER, "mirr")
+        await h.send(USER, TOKEN(2002))
+        self.assertTrue(app.mirrors.is_running(2002))
+        self.assertFalse(app.mirrors.is_running(2001), "прежнее зеркало отключено после замены")
+        self.assertEqual([m["bot_id"] for m in await app.mirrors.of_owner(USER)], [2002])
+
+        await h.click(USER, "mird")
+        await h.click(USER, "mirdy")
+        self.assertEqual(await app.mirrors.of_owner(USER), [])
+        self.assertFalse(app.mirrors.is_running(2002))
+        await h.send(USER, "/start")
+        labels = [b.text for row in h.user_screen(USER).markup.inline_keyboard for b in row]
+        self.assertIn("🪞 Создать зеркало", labels)
+
+    async def test_daily_summary_goes_to_owner_once(self):
+        from bot import jobs
+        app = self.app
+        await app.mirrors.add(TOKEN(2001), owner_id=USER)
+        await app.set_setting("summary_hour", 0)
+        await jobs.daily_summary(app)
+        await jobs.daily_summary(app)
+        texts = [m.text for m in self.tg.chat(OWNER) if m.text and "Сводка за сутки" in m.text]
+        self.assertEqual(len(texts), 1, "за день одна сводка")
+        self.assertIn("Зеркал работает: <b>1</b> из 1", texts[0])
+        self.assertIn("Запасных токенов готово", texts[0])
+
     async def test_mirror_off_without_secret_key_and_hidden_button(self):
         self.app.cipher = None
         await self.h.send(USER, "/start")

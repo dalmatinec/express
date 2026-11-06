@@ -98,6 +98,7 @@ class MirrorManager:
         self._limiter = asyncio.Semaphore(200)
         self._running: dict[int, tuple[Bot, PollLoop]] = {}
         self._lock = asyncio.Lock()
+        self.owners: set[int] = set()  # у кого есть зеркало: от этого зависит кнопка в меню
 
     # ---------- состояние ----------
     @property
@@ -108,6 +109,21 @@ class MirrorManager:
     def public(self) -> bool:
         """Показывать людям кнопку «Создать зеркало»."""
         return self.enabled and bool(self.app.store.setting("mirrors_public", 1))
+
+    def owns(self, user_id: int) -> bool:
+        return user_id in self.owners
+
+    def visible_for(self, user_id: int) -> bool:
+        """Показывать ли человеку кнопку про зеркало: создать (если можно) или управлять своим."""
+        return self.enabled and (self.public or self.owns(user_id))
+
+    async def load_owners(self) -> None:
+        self.owners = {r["owner_id"] for r in await self.app.db.fetchall("SELECT DISTINCT owner_id FROM mirrors")}
+
+    async def of_owner(self, owner_id: int) -> list[dict]:
+        rows = await self.app.db.fetchall(
+            "SELECT bot_id, username, status FROM mirrors WHERE owner_id = ? ORDER BY created_at", (owner_id,))
+        return [{**dict(r), "running": self.is_running(r["bot_id"])} for r in rows]
 
     @property
     def dp(self) -> Dispatcher:
@@ -133,6 +149,7 @@ class MirrorManager:
     async def start_all(self) -> None:
         if not self.enabled:
             return
+        await self.load_owners()
         broken = 0
         for r in await self.app.db.fetchall("SELECT bot_id, token_enc FROM mirrors WHERE status = 'active'"):
             try:
@@ -196,7 +213,8 @@ class MirrorManager:
             await close()
 
     # ---------- добавить и убрать ----------
-    async def add(self, token: str, owner_id: int) -> Mirror:
+    async def add(self, token: str, owner_id: int, replacing: bool = False) -> Mirror:
+        """replacing: человек меняет своё зеркало - прежние убираются после того, как новое успешно запущено."""
         app = self.app
         if not self.enabled:
             raise MirrorError("Зеркала сейчас выключены.")
@@ -214,7 +232,7 @@ class MirrorManager:
             if existing is not None and existing["status"] == "active" and self.is_running(bot_id):
                 raise MirrorError("Этот бот уже подключён как зеркало.")
             limit = int(app.store.setting("mirrors_per_user", DEFAULT_PER_USER))
-            mine = await app.db.fetchval(
+            mine = 0 if replacing else await app.db.fetchval(
                 "SELECT COUNT(*) FROM mirrors WHERE owner_id = ? AND status = 'active' AND bot_id != ?",
                 (owner_id, bot_id))
             if limit > 0 and mine >= limit and owner_id not in app.config.owner_ids:
@@ -238,12 +256,22 @@ class MirrorManager:
                 "token_enc = excluded.token_enc, owner_id = excluded.owner_id, status = 'active'",
                 (bot_id, username, app.cipher.encrypt(token), owner_id, now()))  # type: ignore[union-attr]
             await self._start(bot)
+            if replacing:
+                for old in await app.db.fetchall(
+                        "SELECT bot_id FROM mirrors WHERE owner_id = ? AND bot_id != ?", (owner_id, bot_id)):
+                    await self._drop(old["bot_id"])
+            self.owners.add(owner_id)
         await app.log_event(f"🪞 Новое зеркало @{escape(username)} (владелец <code>{owner_id}</code>).")
         return Mirror(bot_id, username, owner_id)
 
+    async def _drop(self, bot_id: int) -> bool:
+        item = self._running.pop(bot_id, None)
+        if item is not None:
+            await item[1].stop()
+        removed = bool(await self.app.db.execute_rowcount("DELETE FROM mirrors WHERE bot_id = ?", (bot_id,)))
+        await self.load_owners()
+        return removed
+
     async def remove(self, bot_id: int) -> bool:
         async with self._lock:
-            item = self._running.pop(bot_id, None)
-            if item is not None:
-                await item[1].stop()
-            return bool(await self.app.db.execute_rowcount("DELETE FROM mirrors WHERE bot_id = ?", (bot_id,)))
+            return await self._drop(bot_id)

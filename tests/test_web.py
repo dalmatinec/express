@@ -53,6 +53,21 @@ class WebPanel(MirrorBase):
         r = await self.client.post("/login", data={"password": PASSWORD}, allow_redirects=False)
         self.assertEqual(r.status, 429, "после пяти неудач вход заблокирован, даже с верным паролем")
 
+    async def test_owner_told_about_logins_and_lockout(self):
+        import asyncio
+        for _ in range(5):
+            await self.client.post("/login", data={"password": "nope"}, allow_redirects=False)
+        await self.client.post("/login", data={"password": "nope"}, allow_redirects=False)
+        await asyncio.sleep(0.1)
+        texts = [m.text for m in self.tg.chat(OWNER) if m.text]
+        self.assertEqual(sum("заблокирован" in t for t in texts), 1, "о блокировке сказали один раз")
+
+    async def test_owner_told_about_successful_login(self):
+        import asyncio
+        await self.login()
+        await asyncio.sleep(0.1)
+        self.assertTrue(any("Вход в веб-панель" in (m.text or "") for m in self.tg.chat(OWNER)))
+
     async def test_login_ok_and_security_headers(self):
         await self.login()
         r = await self.client.get("/")

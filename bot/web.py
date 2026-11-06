@@ -8,6 +8,7 @@
 ограничение попыток входа, заголовки против встраивания и кэширования."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import logging
@@ -74,6 +75,8 @@ class Panel:
         secret = (app.config.secret_key or secrets.token_hex(32)).encode()
         self._key = hashlib.sha256(b"web-panel:" + secret).digest()
         self._fails: dict[str, list[float]] = {}
+        self._warned: set[str] = set()  # адреса, о блокировке которых уже сообщили
+        self._tasks: set[asyncio.Task] = set()
 
     # ---------- сессия и CSRF ----------
     def _sign(self, payload: str) -> str:
@@ -122,14 +125,32 @@ class Panel:
         return response
 
     # ---------- вход ----------
+    def _tell_owners(self, html: str) -> None:
+        """Сообщение владельцам о событии входа. Не ждём отправки, чтобы вход не тормозил."""
+        async def send() -> None:
+            for uid in sorted(self.app.config.owner_ids):
+                try:
+                    await self.app.main_bot.send_message(uid, html)
+                except Exception:  # noqa: BLE001 - уведомление не должно ломать вход
+                    pass
+        task = asyncio.get_running_loop().create_task(send())
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
     async def login_page(self, request: web.Request) -> web.Response:
         if request.method == "POST":
             ip = request.remote or "?"
             if self._too_many_fails(ip):
+                if ip not in self._warned:
+                    self._warned.add(ip)
+                    self._tell_owners(f"🚨 Веб-панель: вход с адреса <code>{e(ip)}</code> заблокирован после "
+                                      f"{LOGIN_MAX_FAILS} неверных паролей.")
                 return self._login_form("Слишком много попыток, подождите несколько минут.", status=429)
             data = await request.post()
             password = str(data.get("password", "")).encode()
             if hmac.compare_digest(password, self.app.config.web_password.encode()):
+                self._warned.discard(ip)
+                self._tell_owners(f"🔑 Вход в веб-панель с адреса <code>{e(ip)}</code>. Если это не вы, смените WEB_PASSWORD.")
                 response = web.HTTPFound("/")
                 secure = request.secure or request.headers.get("X-Forwarded-Proto") == "https"
                 response.set_cookie("sid", self.new_session(), max_age=SESSION_TTL, httponly=True,

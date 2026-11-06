@@ -36,8 +36,9 @@ def home(app: App, user: User) -> tuple[str, int | None, object]:
     rows = menu_rows(store)
     if not rows:
         html = f"{html}\n\n{store.text('empty_menu').html}".strip()
-    if app.mirrors is not None and app.mirrors.public:
-        rows = [*rows, [InlineKeyboardButton(text="🪞 Создать зеркало", callback_data="mir")]]
+    if app.mirrors is not None and app.mirrors.visible_for(user.id):
+        label = "🪞 Моё зеркало" if app.mirrors.owns(user.id) else "🪞 Создать зеркало"
+        rows = [*rows, [InlineKeyboardButton(text=label, callback_data="mir")]]
     return html, text.media_id, markup(rows)
 
 
@@ -150,13 +151,71 @@ MIRROR_HELP = (
 )
 
 
+async def my_mirror_view(app: App, user_id: int) -> tuple[str, object]:
+    lines = []
+    for m in await app.mirrors.of_owner(user_id):
+        state = "работает" if m["running"] else "не работает (токен отозван или бот удалён)"
+        lines.append(f"@{m['username']}: {state}")
+    html = "🪞 <b>Ваше зеркало</b>\n\n" + "\n".join(lines)
+    kb = markup([
+        [InlineKeyboardButton(text="🔄 Заменить токен", callback_data="mirr")],
+        [InlineKeyboardButton(text="🗑 Удалить зеркало", callback_data="mird")],
+        [InlineKeyboardButton(text="‹ Назад", callback_data="m")],
+    ])
+    return html, kb
+
+
 async def cb_mirror(call: CallbackQuery, state: FSMContext, app: App) -> None:
     await call.answer()
-    if app.mirrors is None or not app.mirrors.public:
+    user, chat_id = call.from_user, call.message.chat.id
+    if app.mirrors is None or not app.mirrors.visible_for(user.id):
+        return
+    cur = current_of(call.message)
+    if app.mirrors.owns(user.id):
+        await state.set_state(None)
+        html, kb = await my_mirror_view(app, user.id)
+        await show(app, user.id, chat_id, html, None, kb, current=cur)
         return
     await state.set_state(MirrorFlow.token)
+    await state.update_data(replace=False)
     kb = markup([[InlineKeyboardButton(text="‹ Назад", callback_data="m")]])
-    await show(app, call.from_user.id, call.message.chat.id, MIRROR_HELP, None, kb, current=current_of(call.message))
+    await show(app, user.id, chat_id, MIRROR_HELP, None, kb, current=cur)
+
+
+async def cb_mirror_replace(call: CallbackQuery, state: FSMContext, app: App) -> None:
+    await call.answer()
+    user = call.from_user
+    if app.mirrors is None or not app.mirrors.owns(user.id):
+        return
+    await state.set_state(MirrorFlow.token)
+    await state.update_data(replace=True)
+    kb = markup([[InlineKeyboardButton(text="‹ Назад", callback_data="mir")]])
+    html = ("🔄 <b>Замена токена</b>\n\nПришлите токен нового бота (создайте его в @BotFather → /newbot). "
+            "Прежнее зеркало отключится, когда новое успешно запустится. Сообщение с токеном я сразу удалю.")
+    await show(app, user.id, call.message.chat.id, html, None, kb, current=current_of(call.message))
+
+
+async def cb_mirror_delete_ask(call: CallbackQuery, state: FSMContext, app: App) -> None:
+    await call.answer()
+    user = call.from_user
+    if app.mirrors is None or not app.mirrors.owns(user.id):
+        return
+    await state.set_state(None)
+    kb = markup([[InlineKeyboardButton(text="🗑 Да, удалить", callback_data="mirdy"),
+                  InlineKeyboardButton(text="Нет", callback_data="mir")]])
+    await show(app, user.id, call.message.chat.id, "Удалить зеркало? Бот перестанет отвечать людям.", None, kb,
+               current=current_of(call.message))
+
+
+async def cb_mirror_delete(call: CallbackQuery, app: App) -> None:
+    await call.answer()
+    user = call.from_user
+    if app.mirrors is None or not app.mirrors.owns(user.id):
+        return
+    for m in await app.mirrors.of_owner(user.id):
+        await app.mirrors.remove(m["bot_id"])
+    kb = markup([[InlineKeyboardButton(text="‹ В меню", callback_data="m")]])
+    await show(app, user.id, call.message.chat.id, "✅ Зеркало удалено.", None, kb, current=current_of(call.message))
 
 
 async def in_mirror_token(message: Message, state: FSMContext, app: App) -> None:
@@ -164,11 +223,12 @@ async def in_mirror_token(message: Message, state: FSMContext, app: App) -> None
     token = (message.text or "").strip()
     await safe_delete(app, chat_id, message.message_id)  # токен в чате не оставляем
     back = markup([[InlineKeyboardButton(text="‹ В меню", callback_data="m")]])
-    if app.mirrors is None or not app.mirrors.public:
+    if app.mirrors is None or not app.mirrors.visible_for(user.id):
         await state.set_state(None)
         return
+    replace = bool((await state.get_data()).get("replace"))
     try:
-        mirror = await app.mirrors.add(token, owner_id=user.id)
+        mirror = await app.mirrors.add(token, owner_id=user.id, replacing=replace)
     except MirrorError as e:
         await show(app, user.id, chat_id, f"❌ {e}\n\nПришлите токен ещё раз или вернитесь в меню.", None, back)
         return
@@ -186,6 +246,9 @@ def build_router(name: str = "user") -> Router:
     r.callback_query.register(cb_close, F.data.regexp(r"^cl:\d+$"))
     r.callback_query.register(cb_noop, F.data == "noop")
     r.callback_query.register(cb_mirror, F.data == "mir")
+    r.callback_query.register(cb_mirror_replace, F.data == "mirr")
+    r.callback_query.register(cb_mirror_delete_ask, F.data == "mird")
+    r.callback_query.register(cb_mirror_delete, F.data == "mirdy")
     r.message.register(in_mirror_token, MirrorFlow.token, F.text)
     r.message.register(any_message)
     return r
