@@ -284,3 +284,31 @@ class MirrorManager:
     async def remove(self, bot_id: int) -> bool:
         async with self._lock:
             return await self._drop(bot_id)
+
+
+_TRANSLIT = dict(zip("абвгдеёжзийклмнопрстуфхцчшщъыьэюя",
+                     ["a", "b", "v", "g", "d", "e", "e", "zh", "z", "i", "y", "k", "l", "m", "n", "o", "p", "r",
+                      "s", "t", "u", "f", "h", "ts", "ch", "sh", "sch", "", "y", "", "e", "yu", "ya"]))
+
+
+def latin_slug(name: str) -> str:
+    out = "".join(_TRANSLIT.get(ch, ch) for ch in (name or "").lower())
+    out = "".join(ch for ch in out if ch.isascii() and ch.isalnum())
+    return out[:14] or "user"
+
+
+async def suggest_names(app: App, first_name: str | None) -> tuple[str, str]:
+    """Готовые имя и случайный свободный юзернейм для нового бота: «Имя LINK» и имя_link_XXXX_bot."""
+    import secrets
+    shown = " ".join((first_name or "").split())[:40] or "Мой"
+    display = f"{shown} LINK"
+    slug = latin_slug(first_name or "")
+    alphabet = "abcdefghjkmnpqrstuvwxyz23456789"
+    candidate = f"{slug}_link_{secrets.token_hex(2)}_bot"
+    for _ in range(5):
+        candidate = f"{slug}_link_{''.join(secrets.choice(alphabet) for _ in range(4))}_bot"
+        try:
+            await app.main_bot.get_chat(f"@{candidate}")  # ответ есть - юзернейм занят
+        except TelegramAPIError:
+            break  # не найден: свободен (или проверить не вышло, тогда BotFather подскажет)
+    return display, candidate

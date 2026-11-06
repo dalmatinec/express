@@ -137,6 +137,15 @@ class Mirrors(MirrorBase):
 
         await h.click(USER, "mir")
         self.assertIn("BotFather", h.user_screen(USER).text)
+        text = h.user_screen(USER).text
+        import re as _re
+        self.assertRegex(text, r"имя: <code>U\d+ LINK</code>|имя: <code>.* LINK</code>")
+        uname = _re.search(r"юзернейм: <code>(\w+)</code>", text)[1]
+        self.assertRegex(uname, r"^\w+_link_[a-z0-9]{4}_bot$")
+        self.assertGreaterEqual(len(uname), 5)
+        await h.click(USER, "mirn")
+        self.assertNotEqual(_re.search(r"юзернейм: <code>(\w+)</code>", h.user_screen(USER).text)[1], uname,
+                            "кнопка даёт другой вариант")
         mid = await h.send(USER, TOKEN(2001))
         self.assertNotIn((USER, mid), self.tg.messages, "сообщение с токеном удалено из чата")
         self.assertIn("@links2001_bot", h.user_screen(USER).text)
@@ -562,3 +571,12 @@ class TelegramReserveAdd(MirrorBase):
         self.assertEqual([r.bot_id for r in await app.reserves.listing()], [3001])
         row = await app.db.fetchone("SELECT token_enc FROM reserve_tokens WHERE bot_id = 3001")
         self.assertNotIn(b"AAAAAAAA", bytes(row["token_enc"]))
+
+
+class Names(unittest.TestCase):
+    def test_slug_translit_and_fallback(self):
+        from bot.mirrors import latin_slug
+        self.assertEqual(latin_slug("Иван"), "ivan")
+        self.assertEqual(latin_slug("Юлия Щ"), "yuliyasch")
+        self.assertEqual(latin_slug("😀"), "user")
+        self.assertEqual(latin_slug("A b-C"), "abc")

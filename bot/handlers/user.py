@@ -10,6 +10,7 @@ Callback-данные:
 а один Router нельзя подключить к двум.
 """
 import math
+from html import escape
 
 from aiogram import F, Router
 from aiogram.filters import CommandObject, CommandStart
@@ -146,9 +147,21 @@ MIRROR_HELP = (
     "🪞 <b>Зеркало</b>\n\n"
     "Это ваш собственный бот с теми же кнопками и ссылками. Если основной бот заблокируют, "
     "зеркало продолжит работать, а мы сообщим вам новый адрес.\n\n"
-    "1. Откройте @BotFather → /newbot и создайте бота.\n"
-    "2. Пришлите сюда его токен. Сообщение с токеном я сразу удалю."
+    "1. Откройте @BotFather → /newbot.\n"
+    "2. Когда спросит имя и юзернейм, вставьте готовые (нажмите, чтобы скопировать):\n"
+    "   имя: <code>{name}</code>\n"
+    "   юзернейм: <code>{username}</code>\n"
+    "   Если юзернейм занят, нажмите «Другой вариант».\n"
+    "3. Пришлите сюда токен, который выдаст BotFather. Сообщение с токеном я сразу удалю."
 )
+
+
+async def mirror_help(app: App, first_name: str | None) -> tuple[str, object]:
+    from ..mirrors import suggest_names
+    name, username = await suggest_names(app, first_name)
+    kb = markup([[InlineKeyboardButton(text="🎲 Другой вариант", callback_data="mirn")],
+                 [InlineKeyboardButton(text="‹ Назад", callback_data="m")]])
+    return MIRROR_HELP.format(name=escape(name), username=username), kb
 
 
 async def my_mirror_view(app: App, user_id: int) -> tuple[str, object]:
@@ -182,8 +195,17 @@ async def cb_mirror(call: CallbackQuery, state: FSMContext, app: App) -> None:
         return
     await state.set_state(MirrorFlow.token)
     await state.update_data(replace=False)
-    kb = markup([[InlineKeyboardButton(text="‹ Назад", callback_data="m")]])
-    await show(app, user.id, chat_id, MIRROR_HELP, None, kb, current=cur)
+    html, kb = await mirror_help(app, user.first_name)
+    await show(app, user.id, chat_id, html, None, kb, current=cur)
+
+
+async def cb_mirror_new_name(call: CallbackQuery, app: App) -> None:
+    await call.answer()
+    user = call.from_user
+    if app.mirrors is None or not app.mirrors.visible_for(user.id) or app.mirrors.owns(user.id):
+        return
+    html, kb = await mirror_help(app, user.first_name)
+    await show(app, user.id, call.message.chat.id, html, None, kb, current=current_of(call.message))
 
 
 async def cb_mirror_replace(call: CallbackQuery, state: FSMContext, app: App) -> None:
@@ -253,6 +275,7 @@ def build_router(name: str = "user") -> Router:
     r.callback_query.register(cb_noop, F.data == "noop")
     r.callback_query.register(cb_mirror, F.data == "mir")
     r.callback_query.register(cb_mirror_replace, F.data == "mirr")
+    r.callback_query.register(cb_mirror_new_name, F.data == "mirn")
     r.callback_query.register(cb_mirror_delete_ask, F.data == "mird")
     r.callback_query.register(cb_mirror_delete, F.data == "mirdy")
     r.message.register(in_mirror_token, MirrorFlow.token, F.text)

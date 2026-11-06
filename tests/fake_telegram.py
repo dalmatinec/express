@@ -10,12 +10,12 @@ from aiogram.exceptions import TelegramBadRequest, TelegramUnauthorizedError
 from aiogram.methods import (
     AnswerCallbackQuery, ApproveChatJoinRequest, CopyMessage, CreateChatInviteLink, DeclineChatJoinRequest, DeleteMessage,
     EditChatInviteLink,
-    EditMessageMedia, EditMessageText, ForwardMessage, GetChatMember, GetFile, GetMe, GetUpdates, RevokeChatInviteLink,
+    EditMessageMedia, EditMessageText, ForwardMessage, GetChat, GetChatMember, GetFile, GetMe, GetUpdates, RevokeChatInviteLink,
     SendAnimation, SendDocument, SendMessage, SendPhoto, SendVideo, SetMyCommands, TelegramMethod,
 )
 from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
 from aiogram.types import (
-    BufferedInputFile, ChatInviteLink, ChatMemberAdministrator, ChatMemberLeft, ChatMemberMember, File, InputFile,
+    BufferedInputFile, Chat, ChatInviteLink, ChatMemberAdministrator, ChatMemberLeft, ChatMemberMember, File, InputFile,
     Message, User,
 )
 
@@ -49,6 +49,7 @@ class FakeTelegram(BaseSession):
     premium_ok: bool = False  # может ли бот показывать премиум-эмодзи (как решает Telegram)
     approved: list[tuple[int, int]] = field(default_factory=list)
     declined: list[tuple[int, int]] = field(default_factory=list)
+    taken_usernames: set[str] = field(default_factory=set)  # юзернеймы, которые «заняты» (get_chat их находит)
     unauthorized: bool = False  # токен бота отозван или бот заблокирован: на любой запрос Unauthorized
 
     def __post_init__(self) -> None:
@@ -105,6 +106,10 @@ class FakeTelegram(BaseSession):
         if isinstance(method, GetUpdates):
             await asyncio.sleep(0.02)  # длинный опрос без новостей
             return []
+        if isinstance(method, GetChat):
+            if str(method.chat_id).lstrip("@") in self.taken_usernames:
+                return Chat(id=-1, type="private")
+            raise TelegramBadRequest(method, "Bad Request: chat not found")
         if isinstance(method, GetMe):
             return User(id=self.bot_id, is_bot=True, first_name="Links", username=f"links{self.bot_id}_bot")
         if isinstance(method, (SetMyCommands, AnswerCallbackQuery)):
