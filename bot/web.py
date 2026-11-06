@@ -96,23 +96,51 @@ class Panel:
         self._key = hashlib.sha256(b"web-panel:" + secret).digest()
         self._fails: dict[str, list[float]] = {}
         self._warned: set[str] = set()  # адреса, о блокировке которых уже сообщили
+        self._codes: dict[int, list] = {}  # tg_id -> [хэш кода, до какого времени, попыток]
+        self._code_asks: dict[str, list[float]] = {}  # ip или id -> когда просили код
         self._tasks: set[asyncio.Task] = set()
 
     # ---------- сессия и CSRF ----------
     def _sign(self, payload: str) -> str:
         return hmac.new(self._key, payload.encode(), hashlib.sha256).hexdigest()
 
-    def new_session(self) -> str:
-        payload = f"{int(time.time()) + SESSION_TTL}.{secrets.token_hex(8)}"
+    def new_session(self, uid: int = 0) -> str:
+        """uid: Telegram ID админа, вошедшего по коду; 0 - вход общим паролем (права владельца)."""
+        payload = f"{int(time.time()) + SESSION_TTL}.{uid}.{secrets.token_hex(8)}"
         return f"{payload}.{self._sign(payload)}"
 
+    def session_uid(self, cookie: str | None) -> int | None:
+        if not cookie or cookie.count(".") != 3:
+            return None
+        exp, uid, nonce, sig = cookie.split(".")
+        if not exp.isdigit() or not uid.isdigit() or int(exp) < time.time():
+            return None
+        if not hmac.compare_digest(sig, self._sign(f"{exp}.{uid}.{nonce}")):
+            return None
+        return int(uid)
+
     def valid_session(self, cookie: str | None) -> bool:
-        if not cookie or cookie.count(".") != 2:
-            return False
-        exp, nonce, sig = cookie.split(".")
-        if not exp.isdigit() or int(exp) < time.time():
-            return False
-        return hmac.compare_digest(sig, self._sign(f"{exp}.{nonce}"))
+        return self.session_uid(cookie) is not None
+
+    def is_owner(self, uid: int) -> bool:
+        return uid == 0 or uid in self.app.config.owner_ids
+
+    def _uid(self, request: web.Request) -> int:
+        return int(request.get("uid", 0))
+
+    def _need_owner(self, request: web.Request) -> None:
+        if not self.is_owner(self._uid(request)):
+            raise web.HTTPForbidden(text="Это действие доступно только владельцам бота.")
+
+    @staticmethod
+    def ip_of(request: web.Request) -> str:
+        """Адрес клиента. За прокси (Caddy на этом же сервере) берём то, что дописал прокси."""
+        remote = request.remote or "?"
+        if remote in ("127.0.0.1", "::1"):
+            fwd = request.headers.get("X-Forwarded-For", "")
+            if fwd:
+                return fwd.split(",")[-1].strip() or remote
+        return remote
 
     def csrf(self, cookie: str) -> str:
         return self._sign("csrf:" + cookie)
@@ -128,8 +156,12 @@ class Panel:
     async def guard(self, request: web.Request, handler):
         if request.path != "/login":
             cookie = request.cookies.get("sid")
-            if not self.valid_session(cookie):
+            uid = self.session_uid(cookie)
+            if uid is None:
                 raise web.HTTPFound("/login")
+            if not self.is_owner(uid) and not self.app.has_perm(uid, "mirrors"):
+                raise web.HTTPFound("/login")  # права сняли - сессия перестаёт работать сразу
+            request["uid"] = uid
             if request.method == "POST":
                 data = await request.post()
                 token = str(data.get("csrf", ""))
@@ -140,6 +172,8 @@ class Panel:
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["X-Content-Type-Options"] = "nosniff"
+        if request.headers.get("X-Forwarded-Proto") == "https":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000"
         response.headers["Content-Security-Policy"] = (
             "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
         return response
@@ -157,35 +191,100 @@ class Panel:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
+    def _asks_exceeded(self, key: str, limit: int) -> bool:
+        t = time.time()
+        recent = [x for x in self._code_asks.get(key, []) if t - x < LOGIN_WINDOW]
+        recent.append(t)
+        self._code_asks[key] = recent
+        return len(recent) > limit
+
     async def login_page(self, request: web.Request) -> web.Response:
-        if request.method == "POST":
-            ip = request.remote or "?"
-            if self._too_many_fails(ip):
-                if ip not in self._warned:
-                    self._warned.add(ip)
-                    self._tell_owners(f"🚨 Веб-панель: вход с адреса <code>{e(ip)}</code> заблокирован после "
-                                      f"{LOGIN_MAX_FAILS} неверных паролей.")
-                return self._login_form("Слишком много попыток, подождите несколько минут.", status=429)
-            data = await request.post()
-            password = str(data.get("password", "")).encode()
-            if hmac.compare_digest(password, self.app.config.web_password.encode()):
-                self._warned.discard(ip)
-                self._tell_owners(f"🔑 Вход в веб-панель с адреса <code>{e(ip)}</code>. Если это не вы, смените WEB_PASSWORD.")
-                response = web.HTTPFound("/")
-                secure = request.secure or request.headers.get("X-Forwarded-Proto") == "https"
-                response.set_cookie("sid", self.new_session(), max_age=SESSION_TTL, httponly=True,
-                                    samesite="Strict", secure=secure, path="/")
-                raise response
-            self._fails.setdefault(ip, []).append(time.time())
-            return self._login_form("Неверный пароль.", status=401)
-        return self._login_form()
+        if request.method != "POST":
+            return self._login_form()
+        ip = self.ip_of(request)
+        if self._too_many_fails(ip):
+            if ip not in self._warned:
+                self._warned.add(ip)
+                self._tell_owners(f"🚨 Веб-панель: вход с адреса <code>{e(ip)}</code> заблокирован после "
+                                  f"{LOGIN_MAX_FAILS} неверных попыток.")
+            return self._login_form("Слишком много попыток, подождите несколько минут.", status=429)
+        data = await request.post()
+        if "code" in data:
+            return await self._verify_code(request, ip, data)
+        if "tg_id" in data:
+            return await self._send_code(ip, data)
+        password = str(data.get("password", "")).encode()
+        if hmac.compare_digest(password, self.app.config.web_password.encode()):
+            return self._enter(request, ip, 0, "общий пароль")
+        self._fails.setdefault(ip, []).append(time.time())
+        return self._login_form("Неверный пароль.", status=401)
+
+    def _enter(self, request: web.Request, ip: str, uid: int, how: str) -> web.Response:
+        self._warned.discard(ip)
+        self._tell_owners(f"🔑 Вход в веб-панель ({e(how)}) с адреса <code>{e(ip)}</code>. "
+                          "Если это не вы, смените WEB_PASSWORD и проверьте список админов.")
+        response = web.HTTPFound("/")
+        secure = request.secure or request.headers.get("X-Forwarded-Proto") == "https"
+        response.set_cookie("sid", self.new_session(uid), max_age=SESSION_TTL, httponly=True,
+                            samesite="Strict", secure=secure, path="/")
+        raise response
+
+    async def _send_code(self, ip: str, data) -> web.Response:
+        raw = str(data.get("tg_id", "")).strip()
+        if not raw.isdigit() or len(raw) > 15:
+            return self._login_form("Telegram ID состоит из цифр.", status=400)
+        uid = int(raw)
+        if self._asks_exceeded("ip:" + ip, 6) or self._asks_exceeded(f"id:{uid}", 3):
+            return self._login_form("Слишком много запросов кода, подождите несколько минут.", status=429)
+        app = self.app
+        if uid in app.admin_ids() and (self.is_owner(uid) or app.has_perm(uid, "mirrors")):
+            code = f"{secrets.randbelow(10 ** 6):06d}"
+            self._codes[uid] = [self._sign(f"code:{uid}:{code}"), time.time() + 300, 0]
+            try:
+                await app.main_bot.send_message(
+                    uid, f"🔐 Код для входа в веб-панель: <code>{code}</code>\n"
+                         f"Запрос с адреса {e(ip)}. Действует 5 минут. Никому его не сообщайте.")
+            except TelegramAPIError:
+                pass  # не писали боту - достучаться нельзя, ответ ниже всё равно одинаковый
+        # ответ одинаковый для всех: так нельзя выяснить, кто админ
+        return self._code_form(raw)
+
+    async def _verify_code(self, request: web.Request, ip: str, data) -> web.Response:
+        raw = str(data.get("tg_id", "")).strip()
+        code = str(data.get("code", "")).strip()
+        uid = int(raw) if raw.isdigit() and len(raw) <= 15 else -1
+        entry = self._codes.get(uid)
+        ok = False
+        if entry is not None and entry[1] >= time.time() and entry[2] < 5:
+            entry[2] += 1
+            ok = hmac.compare_digest(entry[0], self._sign(f"code:{uid}:{code}"))
+        if ok:
+            self._codes.pop(uid, None)
+            return self._enter(request, ip, uid, f"код из Telegram, ID {uid}")
+        self._fails.setdefault(ip, []).append(time.time())
+        return self._code_form(raw, "Неверный или просроченный код.", status=401)
+
+    def _code_form(self, tg_id: str, error: str = "", status: int = 200) -> web.Response:
+        err = f"<p class=bad>{e(error)}</p>" if error else ""
+        body = ("<div class='card center' style='text-align:center'><div class=logo>💬</div><h1>Введите код</h1>"
+                "<p class=muted>Если ваш ID есть в списке админов, бот прислал код в Telegram.</p>" + err +
+                f"<form method=post><input type=hidden name=tg_id value='{e(tg_id)}'>"
+                "<p><input type=text name=code placeholder='6 цифр' inputmode=numeric autocomplete=one-time-code "
+                "autofocus maxlength=6></p><button class=primary style='width:100%'>Войти</button></form>"
+                "<p><a href='/login'>Назад</a></p></div>")
+        response = page("Код", body)
+        response.set_status(status)
+        return response
 
     def _login_form(self, error: str = "", status: int = 200) -> web.Response:
         err = f"<p class=bad>{e(error)}</p>" if error else ""
         body = ("<div class='card center' style='text-align:center'><div class=logo>🔐</div><h1>Вход в панель</h1>"
-                "<p class=muted>Введите пароль из файла .env (WEB_PASSWORD)</p>" + err +
-                "<form method=post><p><input type=password name=password placeholder='Пароль' autofocus "
-                "autocomplete=current-password></p><button class=primary style='width:100%'>Войти</button></form></div>")
+                "<p class=muted>Введите свой Telegram ID: бот пришлёт код. ID можно узнать у @userinfobot.</p>" + err +
+                "<form method=post><p><input type=text name=tg_id placeholder='Ваш Telegram ID' inputmode=numeric "
+                "autofocus></p><button class=primary style='width:100%'>Получить код</button></form>"
+                "<details style='margin-top:18px'><summary class=muted>Войти общим паролем (владелец)</summary>"
+                "<form method=post><p><input type=password name=password placeholder='Пароль' "
+                "autocomplete=current-password></p><button style='width:100%'>Войти</button></form></details></div>")
         response = page("Вход", body)
         response.set_status(status)
         return response
@@ -234,7 +333,8 @@ class Panel:
         parts.append(await self._stats_block())
         parts.append(await self._reserves_block(request))
         parts.append(await self._mirrors_block(request))
-        parts.append(self._notify_block(request))
+        if self.is_owner(self._uid(request)):
+            parts.append(self._notify_block(request))
         parts.append(self._tools_block(request))
         parts.append(await self._events_block())
         return page("Панель бота", "".join(parts))
@@ -257,7 +357,8 @@ class Panel:
         return ("<div class=card id=tools><h2>Сервис</h2>"
                 "<p class=muted>Бэкап уходит в канал логов (без него владельцам в личку). Проверка запасных "
                 "идёт сама раз в час, здесь можно запустить вручную.</p><div class=actions>"
-                + self._form(request, "/backup/now", "<button>💾 Сделать бэкап</button>")
+                + (self._form(request, "/backup/now", "<button>💾 Сделать бэкап</button>")
+                   if self.is_owner(self._uid(request)) else "")
                 + self._form(request, "/reserve/check", "<button>🩺 Проверить запасных</button>")
                 + "</div></div>")
 
@@ -293,7 +394,7 @@ class Panel:
                 "<input type=password name=token placeholder='Токен запасного бота' autocomplete=off>",
                 cls="row")
         switch = ""
-        if app.runner is not None and rows:
+        if app.runner is not None and rows and self.is_owner(self._uid(request)):
             switch = self._form(request, "/switch/ask", "<button>Переключить на запасной сейчас</button>")
         return ("<div class=card id=reserves><h2>Запасные токены</h2>"
                 "<div class=hint>Если основной бот перестанет отвечать, автоматически включится первый "
@@ -345,7 +446,7 @@ class Panel:
             reserve, problems = await self.app.reserves.add(str(data.get("token", "")))
         except MirrorError as ex:
             raise self._back(f"Не добавлен: {ex}")
-        await self.app.log_action(0, "web_reserve_add", reserve.username,
+        await self.app.log_action(self._uid(request), "web_reserve_add", reserve.username,
                                   f"Веб-панель: добавлен запасной @{reserve.username}")
         note = "Добавлен запасной @" + reserve.username
         if problems:
@@ -357,10 +458,11 @@ class Panel:
         bot_id = str(data.get("bot_id", ""))
         if not bot_id.isdigit() or not await self.app.reserves.remove(int(bot_id)):
             raise self._back("Не удалось удалить: работающий основной удалить нельзя.")
-        await self.app.log_action(0, "web_reserve_delete", bot_id, f"Веб-панель: удалён запасной {bot_id}")
+        await self.app.log_action(self._uid(request), "web_reserve_delete", bot_id, f"Веб-панель: удалён запасной {bot_id}")
         raise self._back("Запасной удалён.")
 
     async def switch_ask(self, request: web.Request) -> web.Response:
+        self._need_owner(request)
         ready = await self.app.reserves.candidates()
         if not ready:
             raise self._back("Нет готовых запасных токенов.")
@@ -372,13 +474,14 @@ class Panel:
         return page("Подтверждение", body)
 
     async def switch_do(self, request: web.Request) -> web.Response:
+        self._need_owner(request)
         runner = self.app.runner
         if runner is None:
             raise self._back("Переключение недоступно.")
         info = await runner.failover("вручную из панели", manual=True)
         if info is None:
             raise self._back("Переключиться не на что: живых запасных нет.")
-        await self.app.log_action(0, "web_switch", info.new_username,
+        await self.app.log_action(self._uid(request), "web_switch", info.new_username,
                                   f"Веб-панель: основной бот переключён на @{info.new_username}")
         raise self._back(f"Основной бот теперь @{info.new_username}. Не забудьте отправить уведомление зеркалам.")
 
@@ -387,9 +490,10 @@ class Panel:
         raise self._back("Проблемы: " + " | ".join(out)[:250] if out else "Все запасные в порядке.")
 
     async def backup_now(self, request: web.Request) -> web.Response:
+        self._need_owner(request)
         from .jobs import send_backup
         text = await send_backup(self.app, "💾 Бэкап из веб-панели")
-        await self.app.log_action(0, "web_backup", "", "Веб-панель: бэкап по кнопке")
+        await self.app.log_action(self._uid(request), "web_backup", "", "Веб-панель: бэкап по кнопке")
         raise self._back(re.sub(r"<[^>]+>", "", text)[:280])
 
     async def mirror_delete(self, request: web.Request) -> web.Response:
@@ -397,7 +501,7 @@ class Panel:
         bot_id = str(data.get("bot_id", ""))
         if not bot_id.isdigit() or not await self.app.mirrors.remove(int(bot_id)):
             raise self._back("Зеркало не найдено.")
-        await self.app.log_action(0, "web_mirror_delete", bot_id, f"Веб-панель: удалено зеркало {bot_id}")
+        await self.app.log_action(self._uid(request), "web_mirror_delete", bot_id, f"Веб-панель: удалено зеркало {bot_id}")
         raise self._back("Зеркало удалено.")
 
     async def mirror_public(self, request: web.Request) -> web.Response:
@@ -406,6 +510,7 @@ class Panel:
         raise self._back("Создание зеркал людьми " + ("включено." if value else "выключено."))
 
     async def notify_ask(self, request: web.Request) -> web.Response:
+        self._need_owner(request)
         app = self.app
         data = await request.post()
         text = str(data.get("text", "")).strip()[:3500]
@@ -425,11 +530,12 @@ class Panel:
         return page("Подтверждение", body)
 
     async def notify_send(self, request: web.Request) -> web.Response:
+        self._need_owner(request)
         data = await request.post()
         text = str(data.get("text", "")).strip()[:3500]
         if not text or not self.app.notifier.start(text):
             raise self._back("Рассылка уже идёт или текст пустой.")
-        await self.app.log_action(0, "web_notify", "", "Веб-панель: запущено уведомление зеркалам")
+        await self.app.log_action(self._uid(request), "web_notify", "", "Веб-панель: запущено уведомление зеркалам")
         raise self._back("Рассылка запущена. Ход виден в блоке ниже после обновления страницы.")
 
 

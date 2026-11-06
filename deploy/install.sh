@@ -81,7 +81,6 @@ if [ -n "$NEW_SECRET" ] && [ -z "${OLD_SECRET:-}" ]; then
 fi
 if [ -n "$NEW_PASS" ]; then
     echo
-    echo "Веб-панель слушает только 127.0.0.1:$PANEL_PORT. Пароль: $NEW_PASS (он же в .env)."
-    echo "Открыть с вашего компьютера:  ssh -L $PANEL_PORT:127.0.0.1:$PANEL_PORT root@<адрес сервера>"
-    echo "затем в браузере: http://127.0.0.1:$PANEL_PORT"
+    echo "Веб-панель (пароль владельца: $NEW_PASS, он же в .env) пока слушает только сервер."
+    echo "Открыть её по обычной ссылке с HTTPS, с любого устройства:  bash $DIR/deploy/expose-panel.sh"
 fi

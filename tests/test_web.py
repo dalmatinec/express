@@ -206,3 +206,45 @@ class WebPanel2(WebPanel):
         self.assertIn("Все запасные", await self.follow(r))
         r = await self.post("/backup/now")
         self.assertIn("Бэкап готов", await self.follow(r))
+
+
+class WebCodeLogin(WebPanel):
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.admin_id = 777
+        await self.app.store.add_admin(self.admin_id, {"mirrors"}) if hasattr(self.app.store, "add_admin") else None
+
+    async def ask_code(self, tg_id: int) -> str | None:
+        before = len(self.tg.chat(tg_id))
+        r = await self.client.post("/login", data={"tg_id": str(tg_id)})
+        self.assertEqual(r.status, 200)
+        self.assertIn("Введите код", await r.text(), "ответ одинаковый для админов и чужих")
+        msgs = self.tg.chat(tg_id)[before:]
+        m = re.search(r"<code>(\d{6})</code>", msgs[-1].text) if msgs and msgs[-1].text else None
+        return m[1] if m else None
+
+    async def test_owner_logs_in_with_code_and_stranger_gets_nothing(self):
+        self.assertIsNone(await self.ask_code(555), "чужому код не уходит")
+        code = await self.ask_code(OWNER)
+        self.assertIsNotNone(code)
+        r = await self.client.post("/login", data={"tg_id": str(OWNER), "code": "000000" if code != "000000" else "111111"})
+        self.assertEqual(r.status, 401)
+        r = await self.client.post("/login", data={"tg_id": str(OWNER), "code": code}, allow_redirects=False)
+        self.assertEqual(r.status, 302)
+        self.assertIn("людей всего", await self.page())
+        r = await self.client.post("/login", data={"tg_id": str(OWNER), "code": code}, allow_redirects=False)
+        self.assertEqual(r.status, 401, "код одноразовый")
+
+    async def test_code_attempts_limited(self):
+        code = await self.ask_code(OWNER)
+        wrong = "123456" if code != "123456" else "654321"
+        for _ in range(5):
+            await self.client.post("/login", data={"tg_id": str(OWNER), "code": wrong})
+        r = await self.client.post("/login", data={"tg_id": str(OWNER), "code": code}, allow_redirects=False)
+        self.assertNotEqual(r.status, 302, "после серии неверных кодов вход закрыт даже с верным")
+
+    async def test_code_requests_are_rate_limited(self):
+        for _ in range(3):
+            await self.client.post("/login", data={"tg_id": str(OWNER)})
+        r = await self.client.post("/login", data={"tg_id": str(OWNER)})
+        self.assertEqual(r.status, 429)
