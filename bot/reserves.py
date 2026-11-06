@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from html import escape
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -40,6 +41,7 @@ class Reserve:
 
 class ReserveStore:
     def __init__(self, app: App, factory: Callable[[str], Bot]) -> None:
+        self.problems: dict[int, list[str]] = {}
         self.app = app
         self.factory = factory
 
@@ -106,6 +108,43 @@ class ReserveStore:
             elif not (isinstance(me, ChatMemberAdministrator) and me.can_invite_users):
                 problems.append(f"{title}: нет права «Приглашать пользователей»")
         return problems
+
+    async def health_check(self) -> list[str]:
+        """Проверка запасных: токен жив, бот админ во всех каналах. Мёртвых помечает.
+        Возвращает список проблем для тревоги; последние результаты лежат в self.problems."""
+        problems: dict[int, list[str]] = {}
+        names: dict[int, str] = {}
+        for bot_id, token in await self.candidates():
+            bot = self.factory(token)
+            try:
+                me = await bot.get_me()
+                names[bot_id] = me.username or str(bot_id)
+            except TelegramUnauthorizedError:
+                await self.mark(bot_id, "dead")
+                problems[bot_id] = ["токен отозван или бот удалён"]
+                continue
+            except TelegramAPIError:
+                continue  # Telegram недоступен: не тревожим зря
+            rights = await self.check_rights(bot)
+            if rights:
+                problems[bot_id] = rights
+        self.problems = problems
+        ready = await self.app.db.fetchval("SELECT COUNT(*) FROM reserve_tokens WHERE status = 'ready'")
+        out: list[str] = []
+        for bot_id, items in problems.items():
+            who = names.get(bot_id) or await self.app.db.fetchval(
+                "SELECT username FROM reserve_tokens WHERE bot_id = ?", (bot_id,)) or bot_id
+            out.append(f"@{who}: " + "; ".join(items[:3]))
+        minimum = int(self.app.store.setting("reserves_min", 2))
+        state = f"{ready}|{len(problems)}"
+        if (ready < minimum or problems) and self.app.store.setting("reserve_alert", "") != state:
+            await self.app.set_setting("reserve_alert", state)
+            head = f"⚠️ <b>Запасных токенов готово: {ready}</b>" + (f" (нужно хотя бы {minimum})" if ready < minimum else "")
+            await self.app.alert(head + ("\n" + "\n".join(escape(x) for x in out) if out else "")
+                                 + "\nДобавьте запасных в веб-панели.")
+        elif ready >= minimum and not problems and self.app.store.setting("reserve_alert", ""):
+            await self.app.set_setting("reserve_alert", "")
+        return out
 
     async def remove(self, bot_id: int) -> bool:
         removed = bool(await self.app.db.execute_rowcount(

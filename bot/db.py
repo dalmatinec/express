@@ -240,6 +240,12 @@ MIGRATIONS: list[str] = [
     ) WITHOUT ROWID;
     CREATE INDEX ix_user_bots_bot ON user_bots(bot_id, is_blocked);
     """,
+    # 4 - индексы под рассылку через зеркала и проверку запасных
+    """
+    DROP INDEX IF EXISTS ix_user_bots_bot;
+    CREATE INDEX ix_user_bots_audience ON user_bots(bot_id, is_blocked, last_seen);
+    CREATE INDEX ix_reserve_status ON reserve_tokens(status, position);
+    """,
 ]
 
 

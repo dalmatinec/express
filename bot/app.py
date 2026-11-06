@@ -160,6 +160,8 @@ class App:
         pair = (user_id, bot_id)
         ts = now()
         if pair not in self._known_pairs:
+            if len(self._known_pairs) > 1_000_000:  # повторная вставка безвредна (INSERT OR IGNORE)
+                self._known_pairs.clear()
             self._known_pairs.add(pair)
             await self.db.execute(
                 "INSERT OR IGNORE INTO user_bots(user_id, bot_id, first_seen, last_seen) VALUES (?, ?, ?, ?)",
@@ -167,7 +169,8 @@ class App:
         self._seen_bots[pair] = ts
 
     async def mark_blocked(self, user_id: int, blocked: bool = True) -> None:
-        await self.db.execute("UPDATE users SET is_blocked = ? WHERE id = ?", (int(blocked), user_id))
+        if self._is_main_context():  # заблокировали зеркало - основным ботом человек по-прежнему доступен
+            await self.db.execute("UPDATE users SET is_blocked = ? WHERE id = ?", (int(blocked), user_id))
         bot_id = self.bot.id
         await self.db.execute("UPDATE user_bots SET is_blocked = ? WHERE user_id = ? AND bot_id = ?",
                               (int(blocked), user_id, bot_id))
@@ -194,6 +197,8 @@ class App:
 
     # ---------- экраны ----------
     def set_screen(self, user_id: int, message_id: int, has_media: bool) -> None:
+        if len(self.screens) > 300_000:  # память под контролем: после сброса экран просто пришлётся заново
+            self.screens.clear()
         self.screens[user_id] = Screen(message_id, has_media)
         if self._is_main_context():  # в базе номер экрана хранится только для основного бота
             self._screen_ids[user_id] = message_id

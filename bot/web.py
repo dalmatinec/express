@@ -12,6 +12,7 @@ import asyncio
 import hashlib
 import hmac
 import logging
+import re
 import secrets
 import time
 from html import escape
@@ -33,22 +34,41 @@ LOGIN_MAX_FAILS = 5
 MIN_PASSWORD = 8
 
 CSS = """
-:root{--bg:#f6f7f9;--card:#fff;--text:#1c1f24;--muted:#667085;--line:#e4e7ec;--accent:#2563eb;--bad:#d92d20;--ok:#12b76a;--warn:#f79009}
-@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#171a21;--text:#e8eaee;--muted:#98a2b3;--line:#2a2f3a;--accent:#5b8cff;--bad:#f97066;--ok:#32d583;--warn:#fdb022}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-main{max-width:860px;margin:0 auto;padding:20px 16px 60px}
-h1{font-size:22px;margin:0 0 4px}h2{font-size:17px;margin:0 0 10px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin:14px 0}
-.muted{color:var(--muted);font-size:13px}table{width:100%;border-collapse:collapse}
-td,th{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line);font-size:14px}th{color:var(--muted);font-weight:500}
-input[type=text],input[type=password],textarea{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font:inherit}
-textarea{min-height:90px}button{font:inherit;padding:8px 14px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--text);cursor:pointer}
-button.primary{background:var(--accent);border-color:var(--accent);color:#fff}button.danger{color:var(--bad);border-color:var(--bad)}
-.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.row>input{flex:1;min-width:200px}
-.pill{display:inline-block;padding:1px 9px;border-radius:99px;font-size:12px;border:1px solid var(--line)}
+:root{--bg:#f4f5f8;--card:#fff;--text:#161a22;--muted:#6b7280;--line:#e5e7ee;--accent:#4f46e5;--accent2:#7c3aed;--bad:#dc2626;--ok:#16a34a;--warn:#d97706;--soft:#eef0f6;--shadow:0 1px 2px rgba(16,24,40,.05),0 6px 20px rgba(16,24,40,.05)}
+@media (prefers-color-scheme:dark){:root{--bg:#0d0f14;--card:#161922;--text:#e9ebf1;--muted:#98a1b3;--line:#262b38;--accent:#818cf8;--accent2:#a78bfa;--bad:#f87171;--ok:#4ade80;--warn:#fbbf24;--soft:#1d2130;--shadow:0 1px 2px rgba(0,0,0,.4)}}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+main{max-width:980px;margin:0 auto;padding:0 16px 72px}
+header.top{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:18px 0 6px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:12px}.logo{width:42px;height:42px;border-radius:12px;background:linear-gradient(135deg,var(--accent),var(--accent2));display:grid;place-items:center;color:#fff;font-size:20px}
+h1{font-size:20px;margin:0;line-height:1.2}h2{font-size:16px;margin:0 0 4px}h3{font-size:14px;margin:14px 0 6px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 4px;position:sticky;top:0;background:var(--bg);padding:8px 0;z-index:5}
+.tabs a{padding:7px 14px;border-radius:99px;background:var(--card);border:1px solid var(--line);color:var(--text);text-decoration:none;font-size:14px}
+.tabs a:hover{border-color:var(--accent);color:var(--accent)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;margin:14px 0;box-shadow:var(--shadow)}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(138px,1fr));gap:12px;margin:14px 0}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px 16px;box-shadow:var(--shadow)}
+.stat b{display:block;font-size:26px;line-height:1.15}.stat span{color:var(--muted);font-size:13px}
+.muted{color:var(--muted);font-size:13px}.hint{background:var(--soft);border-radius:10px;padding:10px 12px;color:var(--muted);font-size:13px;margin:8px 0 12px}
+.scroll{overflow-x:auto}table{width:100%;border-collapse:collapse;min-width:420px}
+td,th{text-align:left;padding:10px 8px;border-bottom:1px solid var(--line);font-size:14px;vertical-align:middle}th{color:var(--muted);font-weight:500;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+tr:last-child td{border-bottom:0}
+input[type=text],input[type=password],textarea{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--text);font:inherit}
+input:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:1px}textarea{min-height:110px;resize:vertical}
+button{font:inherit;font-weight:500;padding:9px 16px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--text);cursor:pointer;transition:.12s}
+button:hover{border-color:var(--accent);color:var(--accent)}
+button.primary{background:linear-gradient(135deg,var(--accent),var(--accent2));border-color:transparent;color:#fff}button.primary:hover{color:#fff;filter:brightness(1.08)}
+button.danger{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 45%,var(--line))}button.danger:hover{background:var(--bad);color:#fff;border-color:var(--bad)}
+button.small{padding:5px 11px;font-size:13px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.row>input{flex:1;min-width:200px}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:99px;font-size:12px;font-weight:500;background:var(--soft)}
+.pill:before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.pill.ok{color:var(--ok)}.pill.bad{color:var(--bad)}.pill.warn{color:var(--warn)}.pill.off{color:var(--muted)}
 .ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}
-.flash{padding:10px 14px;border-radius:10px;background:var(--card);border:1px solid var(--accent);margin:12px 0}
-form.inline{display:inline;margin:0}nav{display:flex;justify-content:space-between;align-items:center}
+.flash{padding:12px 16px;border-radius:12px;background:var(--soft);border-left:4px solid var(--accent);margin:14px 0}
+.alert{padding:12px 16px;border-radius:12px;background:color-mix(in srgb,var(--warn) 14%,var(--card));border:1px solid color-mix(in srgb,var(--warn) 40%,var(--line));margin:14px 0}
+form.inline{display:inline;margin:0}.log li{padding:6px 0;border-bottom:1px solid var(--line);font-size:14px;list-style:none}.log{padding:0;margin:0}.log time{color:var(--muted);font-size:12px;margin-right:8px}
+.center{max-width:380px;margin:12vh auto 0}.center .logo{margin:0 auto 14px;width:54px;height:54px;font-size:26px}
+@media (max-width:560px){h1{font-size:18px}.stat b{font-size:22px}td,th{padding:8px 5px}}
 """
 
 STATUS_RU = {"ready": "готов", "active": "работает сейчас", "dead": "не рабочий"}
@@ -162,9 +182,10 @@ class Panel:
 
     def _login_form(self, error: str = "", status: int = 200) -> web.Response:
         err = f"<p class=bad>{e(error)}</p>" if error else ""
-        body = ("<div class=card><h1>Вход</h1>" + err +
+        body = ("<div class='card center' style='text-align:center'><div class=logo>🔐</div><h1>Вход в панель</h1>"
+                "<p class=muted>Введите пароль из файла .env (WEB_PASSWORD)</p>" + err +
                 "<form method=post><p><input type=password name=password placeholder='Пароль' autofocus "
-                "autocomplete=current-password></p><button class=primary>Войти</button></form></div>")
+                "autocomplete=current-password></p><button class=primary style='width:100%'>Войти</button></form></div>")
         response = page("Вход", body)
         response.set_status(status)
         return response
@@ -194,33 +215,76 @@ class Panel:
             last = (f"<p class=muted>Последнее переключение ({kind}) {fmt_ts(f.ts)}: "
                     f"@{e(f.old_username)} → @{e(f.new_username)}. Причина: {e(f.reason)}</p>")
 
-        parts = [f"<nav><div><h1>Панель бота</h1><div class=muted>Основной бот</div></div>"
-                 f"{self._form(request, '/logout', '<button>Выйти</button>')}</nav>"]
+        parts = [
+            "<header class=top><div class=brand><div class=logo>🔗</div>"
+            f"<div><h1>Панель бота</h1><div class=muted>@{e(app.bot_username)} {status}</div></div></div>"
+            f"{self._form(request, '/logout', '<button class=small>Выйти</button>')}</header>"
+            "<div class=tabs><a href='#reserves'>Запасные</a><a href='#mirrors'>Зеркала</a>"
+            "<a href='#notify'>Уведомление</a><a href='#tools'>Сервис</a><a href='#events'>События</a></div>"]
         if flash:
             parts.append(f"<div class=flash>{e(flash)}</div>")
         if app.cipher is None:
-            parts.append("<div class=card><b class=warn>SECRET_KEY не задан.</b> Запасные токены и зеркала "
+            parts.append("<div class=alert><b>SECRET_KEY не задан.</b> Запасные токены и зеркала "
                          "выключены. Добавьте SECRET_KEY в .env и перезапустите бот.</div>")
-        parts.append(f"<div class=card><h2>@{e(app.bot_username)} {status}</h2>{last}</div>")
+        if down:
+            parts.append("<div class=alert><b>Основной бот не работает, запасных нет.</b> Добавьте запасной токен ниже: "
+                         "бот сам подхватит его в течение минуты.</div>")
+        if last:
+            parts.append(f"<div class=card>{last}</div>")
+        parts.append(await self._stats_block())
         parts.append(await self._reserves_block(request))
         parts.append(await self._mirrors_block(request))
         parts.append(self._notify_block(request))
+        parts.append(self._tools_block(request))
+        parts.append(await self._events_block())
         return page("Панель бота", "".join(parts))
+
+    async def _stats_block(self) -> str:
+        app, db = self.app, self.app.db
+        day = now() - 86400
+        users = await db.fetchval("SELECT COUNT(*) FROM users")
+        fresh = await db.fetchval("SELECT COUNT(*) FROM users WHERE created_at >= ?", (day,))
+        active = await db.fetchval("SELECT COUNT(*) FROM users WHERE last_seen >= ?", (day,))
+        mirrors = await app.mirrors.listing() if app.mirrors is not None else []
+        alive = sum(1 for m in mirrors if m["running"])
+        ready = sum(1 for r in await app.reserves.listing() if r.status == "ready")
+        pool = sum(app.links.pool_counts.values())
+        cells = [(users, "людей всего"), (fresh, "новых за сутки"), (active, "активных за сутки"),
+                 (f"{alive}/{len(mirrors)}", "зеркал работает"), (ready, "запасных готово"), (pool, "ссылок в запасе")]
+        return "<div class=stats>" + "".join(f"<div class=stat><b>{v}</b><span>{t}</span></div>" for v, t in cells) + "</div>"
+
+    def _tools_block(self, request: web.Request) -> str:
+        return ("<div class=card id=tools><h2>Сервис</h2>"
+                "<p class=muted>Бэкап уходит в канал логов (без него владельцам в личку). Проверка запасных "
+                "идёт сама раз в час, здесь можно запустить вручную.</p><div class=actions>"
+                + self._form(request, "/backup/now", "<button>💾 Сделать бэкап</button>")
+                + self._form(request, "/reserve/check", "<button>🩺 Проверить запасных</button>")
+                + "</div></div>")
+
+    async def _events_block(self) -> str:
+        rows = await self.app.db.fetchall("SELECT ts, action, details FROM admin_log ORDER BY id DESC LIMIT 10")
+        items = "".join(f"<li><time>{fmt_ts(r['ts'])}</time>{e(r['action'])} {e(r['details'] or '')}</li>" for r in rows)
+        return f"<div class=card id=events><h2>Последние события</h2><ul class=log>{items or '<li>пусто</li>'}</ul></div>"
 
     async def _reserves_block(self, request: web.Request) -> str:
         app = self.app
         rows = ""
         for r in await app.reserves.listing():
-            cls = {"active": "ok", "dead": "bad"}.get(r.status, "")
+            cls = {"active": "ok", "dead": "bad", "ready": "ok"}.get(r.status, "warn")
+            if r.status == "ready" and app.reserves.problems.get(r.bot_id):
+                cls = "warn"
             action = ""
             if r.status != "active":
                 action = self._form(request, "/reserve/delete",
-                                    "<button class=danger>Удалить</button>",
+                                    "<button class='danger small'>Удалить</button>",
                                     f"<input type=hidden name=bot_id value='{r.bot_id}'>")
-            rows += (f"<tr><td>{r.position}</td><td>@{e(r.username)}</td>"
-                     f"<td class={cls}>{e(STATUS_RU.get(r.status, r.status))}</td><td>{action}</td></tr>")
-        table = (f"<table><tr><th>№</th><th>Бот</th><th>Статус</th><th></th></tr>{rows}</table>" if rows
-                 else "<p class=muted>Запасных пока нет.</p>")
+            issues = app.reserves.problems.get(r.bot_id)
+            note = f"<div class='muted warn'>{e('; '.join(issues[:3]))}</div>" if issues else ""
+            rows += (f"<tr><td>{r.position}</td><td>@{e(r.username)}{note}</td>"
+                     f"<td><span class='pill {cls}'>{e(STATUS_RU.get(r.status, r.status))}</span></td>"
+                     f"<td>{action}</td></tr>")
+        table = (f"<div class=scroll><table><tr><th>№</th><th>Бот</th><th>Статус</th><th></th></tr>{rows}</table></div>"
+                 if rows else "<p class=muted>Запасных пока нет.</p>")
         add = ""
         if app.cipher is not None:
             add = self._form(
@@ -231,29 +295,29 @@ class Panel:
         switch = ""
         if app.runner is not None and rows:
             switch = self._form(request, "/switch/ask", "<button>Переключить на запасной сейчас</button>")
-        return ("<div class=card><h2>Запасные токены</h2>"
-                "<p class=muted>Если основной бот перестанет отвечать, автоматически включится первый "
+        return ("<div class=card id=reserves><h2>Запасные токены</h2>"
+                "<div class=hint>Если основной бот перестанет отвечать, автоматически включится первый "
                 "готовый запасной. Запасной бот заранее добавьте админом во все каналы с правом "
-                "«Приглашать пользователей». Токены здесь не показываются.</p>"
+                "«Приглашать пользователей». Токены здесь не показываются.</div>"
                 f"{table}<p>{add}</p><p>{switch}</p></div>")
 
     async def _mirrors_block(self, request: web.Request) -> str:
         app = self.app
         rows = ""
         for m in await app.mirrors.listing():
-            state = ("<span class=ok>работает</span>" if m["running"]
-                     else "<span class=bad>отключено</span>")
-            delete = self._form(request, "/mirror/delete", "<button class=danger>Удалить</button>",
+            state = ("<span class='pill ok'>работает</span>" if m["running"]
+                     else "<span class='pill bad'>отключено</span>")
+            delete = self._form(request, "/mirror/delete", "<button class='danger small'>Удалить</button>",
                                 f"<input type=hidden name=bot_id value='{m['bot_id']}'>")
             rows += (f"<tr><td>@{e(m['username'])}</td><td>{m['owner_id']}</td><td>{state}</td>"
                      f"<td>{m['users']}</td><td>{delete}</td></tr>")
-        table = (f"<table><tr><th>Зеркало</th><th>Владелец</th><th>Статус</th><th>Людей</th><th></th></tr>{rows}</table>"
+        table = (f"<div class=scroll><table><tr><th>Зеркало</th><th>Владелец</th><th>Статус</th><th>Людей</th><th></th></tr>{rows}</table></div>"
                  if rows else "<p class=muted>Зеркал пока нет.</p>")
         public = bool(app.store.setting("mirrors_public", 1))
         toggle = self._form(
             request, "/mirror/public",
             f"<button>{'Выключить' if public else 'Включить'} создание зеркал людьми</button>")
-        return (f"<div class=card><h2>Зеркала</h2>{table}"
+        return (f"<div class=card id=mirrors><h2>Зеркала</h2>{table}"
                 f"<p class=muted>Создание людьми сейчас: <b>{'включено' if public else 'выключено'}</b></p>"
                 f"<p>{toggle}</p></div>")
 
@@ -266,8 +330,8 @@ class Panel:
             request, "/notify/ask", "<p><button class=primary>Проверить и отправить</button></p>",
             f"<p><textarea name=text maxlength=3500>{e(default_text(app.bot_username))}</textarea></p>",
             cls="")
-        return ("<div class=card><h2>Уведомление зеркалам</h2>"
-                "<p class=muted>Сообщение получат люди, которые запускали основной бот или зеркала "
+        return ("<div class=card id=notify><h2>Уведомление зеркалам</h2>"
+                "<p class=hint>Сообщение получат люди, которые запускали основной бот или зеркала "
                 "и не заблокировали их. Telegram не даёт боту писать первым, поэтому остальных "
                 "не достать.</p>" + status + form + "</div>")
 
@@ -317,6 +381,16 @@ class Panel:
         await self.app.log_action(0, "web_switch", info.new_username,
                                   f"Веб-панель: основной бот переключён на @{info.new_username}")
         raise self._back(f"Основной бот теперь @{info.new_username}. Не забудьте отправить уведомление зеркалам.")
+
+    async def reserve_check(self, request: web.Request) -> web.Response:
+        out = await self.app.reserves.health_check()
+        raise self._back("Проблемы: " + " | ".join(out)[:250] if out else "Все запасные в порядке.")
+
+    async def backup_now(self, request: web.Request) -> web.Response:
+        from .jobs import send_backup
+        text = await send_backup(self.app, "💾 Бэкап из веб-панели")
+        await self.app.log_action(0, "web_backup", "", "Веб-панель: бэкап по кнопке")
+        raise self._back(re.sub(r"<[^>]+>", "", text)[:280])
 
     async def mirror_delete(self, request: web.Request) -> web.Response:
         data = await request.post()
@@ -368,6 +442,8 @@ def build_web(app: App) -> web.Application:
         web.get("/", panel.index),
         web.post("/reserve/add", panel.reserve_add),
         web.post("/reserve/delete", panel.reserve_delete),
+        web.post("/reserve/check", panel.reserve_check),
+        web.post("/backup/now", panel.backup_now),
         web.post("/switch/ask", panel.switch_ask),
         web.post("/switch/do", panel.switch_do),
         web.post("/mirror/delete", panel.mirror_delete),

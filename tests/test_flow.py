@@ -666,6 +666,11 @@ class Performance(Base):
             "joins": "SELECT COUNT(*) FROM joins WHERE item_id = 1 AND ts > 5",
             "ad_users": "SELECT ad_id FROM ad_users WHERE user_id = 1 AND ad_id IN (1, 2)",
             "users_seen": "SELECT COUNT(*) FROM users WHERE last_seen > 5",
+            "mirror_audience": ("SELECT user_id FROM user_bots WHERE bot_id IN (1, 2) AND is_blocked = 0 "
+                                "AND last_seen > 5"),
+            "mirror_owner": "SELECT bot_id FROM mirrors WHERE owner_id = 1",
+            "reserve_ready": "SELECT bot_id FROM reserve_tokens WHERE status = 'ready' ORDER BY position",
+            "user_main": "SELECT 1 FROM user_bots WHERE user_id = 1 AND bot_id = 2",
         }
         for name, sql in plans.items():
             plan = " ".join(r[3] for r in await db.fetchall("EXPLAIN QUERY PLAN " + sql))

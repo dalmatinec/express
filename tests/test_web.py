@@ -194,3 +194,15 @@ class WebPanel(MirrorBase):
         await self.login()
         self.assertIn("SECRET_KEY не задан", await self.page())
 
+
+
+class WebPanel2(WebPanel):
+    async def test_dashboard_stats_and_tools(self):
+        await self.login()
+        body = await self.page()
+        self.assertIn("людей всего", body)
+        self.assertIn("🩺 Проверить запасных", body)
+        r = await self.post("/reserve/check")
+        self.assertIn("Все запасные", await self.follow(r))
+        r = await self.post("/backup/now")
+        self.assertIn("Бэкап готов", await self.follow(r))

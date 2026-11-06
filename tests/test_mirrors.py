@@ -469,3 +469,82 @@ class Disaster(MirrorBase):
         await app.mirrors.start_all()
         self.assertTrue(app.mirrors.is_running(2001))
         self.assertEqual([r.bot_id for r in await app.reserves.listing()], [3001])
+
+
+class MirrorBroadcast(MirrorBase):
+    async def test_broadcast_reaches_mirror_users_once(self):
+        h, app = self.h, self.app
+        await h.send(USER, "/start")                       # человек основного бота
+        await app.mirrors.add(TOKEN(2001), owner_id=USER)
+        await h.mirror_send(2001, OTHER, "/start")         # человек только зеркала
+        mtg = self.bots.tg(2001)
+
+        await h.admin("x:bcnew")
+        await h.send(OWNER, "Новость!")
+        before = len(mtg.chat(OTHER))
+        await h.admin("x:bcgo")
+        await app.broadcaster.task
+        cur = app.broadcaster.current
+        self.assertEqual(cur.via_mirrors, 1)
+        self.assertEqual(self.tg.last(USER).text, "copy", "основной бот копирует как раньше")
+        self.assertEqual(self.tg.chat(OTHER), [], "человеку зеркала основной бот не пишет")
+        self.assertEqual(len(mtg.chat(OTHER)), before + 1)
+        self.assertEqual(mtg.last(OTHER).text, "Новость!")
+
+    async def test_mirror_block_does_not_block_main(self):
+        from aiogram.exceptions import TelegramForbiddenError
+        h, app = self.h, self.app
+        await h.send(OTHER, "/start")
+        await app.mirrors.add(TOKEN(2001), owner_id=USER)
+        await h.mirror_send(2001, OTHER, "/start")
+        from bot.app import use_bot
+        with use_bot(app.mirrors.bot_of(2001)):
+            await app.mark_blocked(OTHER)
+        self.assertEqual(await app.db.fetchval("SELECT is_blocked FROM users WHERE id = ?", (OTHER,)), 0)
+        self.assertEqual(await app.db.fetchval(
+            "SELECT is_blocked FROM user_bots WHERE user_id = ? AND bot_id = 2001", (OTHER,)), 1)
+
+
+class ReserveHealth(MirrorBase):
+    async def test_health_check_marks_dead_and_alerts_once(self):
+        app = self.app
+        await app.reserves.add(TOKEN(3001))
+        await app.set_setting("reserves_min", 2)
+        await app.reserves.health_check()
+        alerts = [m.text for m in self.tg.chat(OWNER) if m.text and "Запасных токенов готово" in m.text]
+        self.assertEqual(len(alerts), 1, "готово 1 из 2: тревога")
+        await app.reserves.health_check()
+        alerts = [m.text for m in self.tg.chat(OWNER) if m.text and "Запасных токенов готово" in m.text]
+        self.assertEqual(len(alerts), 1, "то же состояние: повторно не тревожим")
+
+        self.bots.tg(3001).unauthorized = True
+        out = await app.reserves.health_check()
+        self.assertTrue(any("отозван" in x for x in out))
+        row = await app.db.fetchone("SELECT status FROM reserve_tokens WHERE bot_id = 3001")
+        self.assertEqual(row["status"], "dead")
+
+    async def test_healthy_reserves_give_no_alert(self):
+        app = self.app
+        await app.reserves.add(TOKEN(3001))
+        await app.reserves.add(TOKEN(3002))
+        await app.reserves.health_check()
+        self.assertFalse([m for m in self.tg.chat(OWNER) if m.text and "Запасных токенов готово" in m.text])
+
+
+class TelegramAdminMirrors(MirrorBase):
+    async def test_admin_section_lists_deletes_and_checks(self):
+        h, app = self.h, self.app
+        await app.mirrors.add(TOKEN(2001), owner_id=USER)
+        await app.reserves.add(TOKEN(3001))
+        scr = await h.admin("a:mir")
+        self.assertIn("Зеркал: <b>1</b> работает из 1", scr.text)
+        scr = await h.admin("a:mirl")
+        self.assertIn("@links2001_bot", scr.text)
+        scr = await h.admin("a:mirdq:2001")
+        self.assertIn("Удалить зеркало", scr.text)
+        await h.admin("x:mirdel:2001")
+        self.assertFalse(app.mirrors.is_running(2001))
+        scr = await h.admin("x:reschk")
+        self.assertIn("@links3001_bot", scr.text)
+        scr = await h.admin("x:mirpub")
+        self.assertIn("Создание зеркал людьми: <b>", scr.text)

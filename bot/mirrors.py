@@ -134,6 +134,13 @@ class MirrorManager:
     def running_bots(self) -> list[Bot]:
         return [bot for bot, _ in self._running.values()]
 
+    def running_ids(self) -> list[int]:
+        return [bot_id for bot_id in self._running if self.is_running(bot_id)]
+
+    def bot_of(self, bot_id: int) -> Bot | None:
+        item = self._running.get(bot_id)
+        return item[0] if item and self.is_running(bot_id) else None
+
     def is_running(self, bot_id: int) -> bool:
         item = self._running.get(bot_id)
         return item is not None and item[1].running
