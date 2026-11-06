@@ -43,6 +43,7 @@ async def view_mirrors(ctx: Ctx) -> ViewResult:
     rows: Rows = [
         [b("🪞 Зеркала", "a:mirl"), b("🛡 Запасные", "a:resl")],
         [b(f"🌐 Людям можно создавать: {yes_no(public)}", "x:mirpub")],
+        [b(f"📣 Сообщать о новом адресе само: {yes_no(bool(app.store.setting('auto_notify', 1)))}", "x:autonot")],
         [b("🩺 Проверить запасных", "x:reschk")],
     ]
     if _is_owner(ctx) and ready:
@@ -82,6 +83,14 @@ async def act_mirror_delete(ctx: Ctx, bot_id: str):
         await ctx.log("mirror.delete", bot_id)
         ctx.notice = "Зеркало удалено."
     return "a:mirl"
+
+
+@action("autonot", "mirrors")
+async def act_auto_notify(ctx: Ctx):
+    value = 0 if ctx.app.store.setting("auto_notify", 1) else 1
+    await ctx.app.set_setting("auto_notify", value)
+    await ctx.log("mirror.auto_notify", str(value))
+    return "a:mir"
 
 
 @action("mirpub", "mirrors")

@@ -9,7 +9,7 @@ ACTION_NAMES = {
     "ad.create": "создал рекламу", "ad.start": "запустил рекламу", "ad.pause": "поставил рекламу на паузу",
     "ad.delete": "удалил рекламу", "item.layout": "переставил кнопки меню",
     "mirror.delete": "удалил зеркало", "mirror.public": "переключил создание зеркал людьми",
-    "mirror.reserve_add": "добавил запасной", "mirror.switch": "переключил основной бот на",
+    "mirror.reserve_add": "добавил запасной", "mirror.auto_notify": "переключил автоуведомление о новом адресе", "mirror.switch": "переключил основной бот на",
     "web_reserve_add": "добавил запасной (веб)", "web_reserve_delete": "удалил запасной (веб)",
     "web_switch": "переключил бота (веб)", "web_mirror_delete": "удалил зеркало (веб)",
     "web_notify": "запустил уведомление (веб)", "web_backup": "сделал бэкап (веб)",

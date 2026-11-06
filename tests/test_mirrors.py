@@ -282,6 +282,7 @@ class Mirrors(MirrorBase):
 class Failover(MirrorBase):
     async def test_main_dies_reserve_takes_over_and_mirrors_are_notified(self):
         h, app = self.h, self.app
+        await app.set_setting("auto_notify", 0)  # здесь проверяем вариант «спросить владельца»
         await h.make_item()
         await app.links.refill()
         await app.mirrors.add(TOKEN(2001), owner_id=USER)
@@ -323,6 +324,23 @@ class Failover(MirrorBase):
         # после перезапуска берётся выбранный запасной, а не токен из .env
         token = await pick_main_token(h.config, self.bots)
         self.assertEqual(token, TOKEN(3001))
+
+    async def test_ban_of_main_notifies_mirrors_automatically(self):
+        h, app = self.h, self.app
+        await app.mirrors.add(TOKEN(2001), owner_id=USER)
+        await h.mirror_send(2001, OTHER, "/start")
+        await app.reserves.add(TOKEN(3001))
+        h.start_runner()
+        self.tg.unauthorized = True
+        await h.wait_for(lambda: app.main_bot.id == 3001)
+        await h.wait_for(lambda: app.notifier.state is not None)
+        await app.notifier.wait()
+        last = self.bots.tg(2001).last(OTHER)
+        self.assertIn("@links3001_bot", last.text, "зеркало получило новый адрес без вопроса")
+        new_tg = self.bots.tg(3001)
+        await h.wait_for(lambda: any("автоматически" in (m.text or "") for m in new_tg.chat(OWNER)))
+        notes = [m for m in new_tg.chat(OWNER) if "автоматически" in (m.text or "")]
+        self.assertIsNone(notes[-1].markup, "кнопок Да/Нет нет")
 
     async def test_dead_reserve_is_skipped_and_marked(self):
         h, app = self.h, self.app

@@ -25,6 +25,7 @@ from .crypto import TokenCipher
 from .mirrors import classify_error, token_bot_id
 from .polling import PollLoop
 from .reserves import env_hash
+from .notify import default_text
 from .store import now
 
 log = logging.getLogger(__name__)
@@ -179,9 +180,16 @@ class MainRunner:
         ]])
         old = f"@{escape(info.old_username)}" if info.old_username else "прежний бот"
         how = "Переключено вручную" if info.manual else "Основной бот перестал отвечать, включён запасной"
-        await app.notify_admins(
-            f"🔁 <b>{how}</b>\n{old} → @{escape(info.new_username)}\nПричина: {escape(info.reason)}\n\n"
-            "Отправить зеркалам и их пользователям сообщение о новом адресе?", perm=None, reply_markup=kb)
+        head = f"🔁 <b>{how}</b>\n{old} → @{escape(info.new_username)}\nПричина: {escape(info.reason)}\n\n"
+        # блокировка основного: зеркала и люди узнают новый адрес сами, без вопроса владельцу
+        auto = (bool(app.store.setting("auto_notify", 1)) and not info.manual and app.notifier is not None
+                and app.notifier.start(default_text(info.new_username)))
+        if auto:
+            await app.notify_admins(head + "✅ Зеркалам и их людям автоматически отправлено сообщение о новом адресе. "
+                                           "Ход рассылки виден в веб-панели.", perm=None)
+        else:
+            await app.notify_admins(head + "Отправить зеркалам и их пользователям сообщение о новом адресе?",
+                                    perm=None, reply_markup=kb)
         await app.log_event(f"🔁 Основной бот: {old} → @{escape(info.new_username)} ({escape(info.reason)}).")
         try:
             await app.links.check_chats()  # сразу видно, где запасной бот не админ
