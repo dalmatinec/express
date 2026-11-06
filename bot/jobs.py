@@ -28,6 +28,9 @@ async def run_jobs(app: App, guard: GuardMiddleware) -> None:
         ticks += TICK
         try:
             await app.flush()
+            if app.backup_due and now() >= app.backup_due:
+                app.backup_due = 0
+                await send_backup(app, "💾 Бэкап после изменений", with_media=False)
             if ticks % MAINTENANCE_EVERY == 0:
                 guard.cleanup()
                 await app.links.cleanup()
@@ -104,9 +107,9 @@ async def daily_summary(app: App) -> None:
             log.warning("Сводку не доставить %s: %s", uid, e)
 
 
-async def send_backup(app: App, caption: str) -> str:
+async def send_backup(app: App, caption: str, with_media: bool = True) -> str:
     """Бэкап на сервер (там лежат 3 последних) + копия в канал логов, а без канала - владельцам."""
-    path = await make_backup(app)
+    path = await make_backup(app, with_media)
     size = f"{path.stat().st_size / 1048576:.1f} МБ"
     on_server = f"На сервере: <code>{escape(str(path.parent.resolve()))}</code>"
     if path.stat().st_size > SEND_LIMIT:

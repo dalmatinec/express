@@ -261,6 +261,7 @@ class MirrorManager:
                         "SELECT bot_id FROM mirrors WHERE owner_id = ? AND bot_id != ?", (owner_id, bot_id)):
                     await self._drop(old["bot_id"])
             self.owners.add(owner_id)
+            app.backup_soon()
         await app.log_event(f"🪞 Новое зеркало @{escape(username)} (владелец <code>{owner_id}</code>).")
         return Mirror(bot_id, username, owner_id)
 
@@ -270,6 +271,7 @@ class MirrorManager:
             await item[1].stop()
         removed = bool(await self.app.db.execute_rowcount("DELETE FROM mirrors WHERE bot_id = ?", (bot_id,)))
         await self.load_owners()
+        self.app.backup_soon()
         return removed
 
     async def remove(self, bot_id: int) -> bool:

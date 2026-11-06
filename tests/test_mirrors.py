@@ -396,3 +396,76 @@ class Reserves(MirrorBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Disaster(MirrorBase):
+    async def test_backup_has_manifest_and_wrong_key_is_refused(self):
+        import tempfile, zipfile
+        from pathlib import Path
+        from bot.backup import make_backup, restore_files
+        app = self.app
+        await app.mirrors.add(TOKEN(2001), owner_id=USER)
+        path = await make_backup(app)
+        self.assertIn("manifest.json", zipfile.ZipFile(path).namelist())
+        with tempfile.TemporaryDirectory() as tmp:
+            db, media = Path(tmp) / "bot.db", Path(tmp) / "media"
+            with self.assertRaises(ValueError) as c:
+                restore_files(path, db, media, "другой-ключ")
+            self.assertIn("SECRET_KEY не тот", str(c.exception))
+            self.assertFalse(db.exists(), "с чужим ключом ничего не тронуто")
+            restore_files(path, db, media, app.config.secret_key)
+            self.assertTrue(db.exists())
+            restore_files(path, db, media, "другой-ключ", force=True)
+
+    async def test_old_backup_without_manifest_still_restores(self):
+        import tempfile, zipfile
+        from pathlib import Path
+        from bot.backup import make_backup, restore_files
+        path = await make_backup(self.app)
+        old = path.with_name("old.zip")
+        with zipfile.ZipFile(path) as zin, zipfile.ZipFile(old, "w") as zout:
+            for n in zin.namelist():
+                if n != "manifest.json":
+                    zout.writestr(n, zin.read(n))
+        with tempfile.TemporaryDirectory() as tmp:
+            restore_files(old, Path(tmp) / "bot.db", Path(tmp) / "m", "любой")
+
+    async def test_mirror_change_schedules_light_backup(self):
+        from bot import jobs
+        app = self.app
+        self.assertEqual(app.backup_due, 0)
+        await app.mirrors.add(TOKEN(2001), owner_id=USER)
+        self.assertGreater(app.backup_due, 0)
+        app.backup_due = 1  # срок наступил
+        sent = []
+        orig = jobs.send_backup
+        async def fake(app_, caption, with_media=True):
+            sent.append((caption, with_media))
+            return ""
+        jobs.send_backup = fake
+        try:
+            from bot.store import now
+            if app.backup_due and now() >= app.backup_due:
+                app.backup_due = 0
+                await jobs.send_backup(app, "x", with_media=False)
+        finally:
+            jobs.send_backup = orig
+        self.assertEqual(sent, [("x", False)])
+
+    async def test_full_loss_restore_runs_mirrors_and_reserve_takes_over(self):
+        """Сервер потерян: новая установка, из архива приезжают зеркала и запасные, токен из .env мёртв."""
+        import tempfile
+        from pathlib import Path
+        from bot.backup import make_backup, restore_files
+        app = self.app
+        await app.mirrors.add(TOKEN(2001), owner_id=USER)
+        await app.reserves.add(TOKEN(3001))
+        path = await make_backup(app)
+        await app.db.execute("DELETE FROM mirrors")
+        await app.db.execute("DELETE FROM reserve_tokens")
+        from bot.backup import restore_backup
+        await app.mirrors.stop_all()
+        await restore_backup(app, path)
+        await app.mirrors.start_all()
+        self.assertTrue(app.mirrors.is_running(2001))
+        self.assertEqual([r.bot_id for r in await app.reserves.listing()], [3001])

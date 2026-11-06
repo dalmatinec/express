@@ -87,6 +87,7 @@ class ReserveStore:
             "INSERT INTO reserve_tokens(bot_id, username, token_enc, position, status, created_at) "
             "VALUES (?, ?, ?, ?, 'ready', ?)",
             (bot_id, me.username or str(me.id), app.cipher.encrypt(token), position, now()))  # type: ignore[union-attr]
+        app.backup_soon()
         problems = await self.check_rights(bot)
         return Reserve(bot_id, me.username or str(me.id), position, "ready"), problems
 
@@ -107,8 +108,11 @@ class ReserveStore:
         return problems
 
     async def remove(self, bot_id: int) -> bool:
-        return bool(await self.app.db.execute_rowcount(
+        removed = bool(await self.app.db.execute_rowcount(
             "DELETE FROM reserve_tokens WHERE bot_id = ? AND status != 'active'", (bot_id,)))
+        if removed:
+            self.app.backup_soon()
+        return removed
 
     async def candidates(self) -> list[tuple[int, str]]:
         """(bot_id, токен) готовых запасных по порядку."""
@@ -129,3 +133,4 @@ class ReserveStore:
         await self.app.db.execute("UPDATE reserve_tokens SET status = 'dead' WHERE status = 'active'")
         await self.mark(bot_id, "active")
         await self.app.set_setting("main_override", {"bot_id": bot_id, "env": env_hash(self.app.config.bot_token)})
+        self.app.backup_soon()

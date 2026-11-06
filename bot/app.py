@@ -114,6 +114,7 @@ class App:
     link_msgs: dict[tuple[int, int], tuple[int, str]] = field(default_factory=BotScoped)  # (юзер, кнопка) -> (сообщение, ссылка)
     _seen: dict[int, tuple[int, str | None, str | None]] = field(default_factory=dict)
     _screen_ids: dict[int, int] = field(default_factory=dict)
+    backup_due: int = 0  # когда пора сделать лёгкий бэкап после важных изменений (0 - не нужно)
     _seen_bots: dict[tuple[int, int], int] = field(default_factory=dict)  # (юзер, бот) -> когда видели
     _known_pairs: set[tuple[int, int]] = field(default_factory=set)
 
@@ -131,6 +132,12 @@ class App:
         """Перечитать кэш. Сначала сбрасываем буферы - иначе живые счётчики затрутся старыми из базы."""
         await self.flush()
         await self.store.reload()
+
+    def backup_soon(self) -> None:
+        """Изменили зеркала или запасные токены: через несколько минут уйдёт лёгкий бэкап (только база),
+        чтобы при потере сервера не ждать суточного."""
+        if not self.backup_due:
+            self.backup_due = now() + 300
 
     async def set_setting(self, key: str, value: Any) -> None:
         await self.db.execute("INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)", (key, json.dumps(value)))
