@@ -211,6 +211,35 @@ MIGRATIONS: list[str] = [
     DROP TABLE IF EXISTS sponsor_users;
     DROP TABLE IF EXISTS sponsors;
     """,
+    # 3: зеркала, запасные токены основного бота, через какие боты пользовался человек
+    """
+    CREATE TABLE mirrors (
+        bot_id     INTEGER PRIMARY KEY,
+        username   TEXT,
+        token_enc  BLOB NOT NULL,
+        owner_id   INTEGER NOT NULL,
+        status     TEXT NOT NULL DEFAULT 'active',     -- active | revoked
+        created_at INTEGER NOT NULL
+    );
+    CREATE INDEX ix_mirrors_owner ON mirrors(owner_id);
+    CREATE TABLE reserve_tokens (
+        bot_id     INTEGER PRIMARY KEY,
+        username   TEXT,
+        token_enc  BLOB NOT NULL,
+        position   INTEGER NOT NULL,
+        status     TEXT NOT NULL DEFAULT 'ready',      -- ready | active | dead
+        created_at INTEGER NOT NULL
+    );
+    CREATE TABLE user_bots (
+        user_id    INTEGER NOT NULL,
+        bot_id     INTEGER NOT NULL,
+        first_seen INTEGER NOT NULL,
+        last_seen  INTEGER NOT NULL,
+        is_blocked INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (user_id, bot_id)
+    ) WITHOUT ROWID;
+    CREATE INDEX ix_user_bots_bot ON user_bots(bot_id, is_blocked);
+    """,
 ]
 
 

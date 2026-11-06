@@ -17,6 +17,7 @@ from bot.handlers.admin import people
 from bot.handlers.admin import router as admin_router
 from bot.handlers.admin.core import admin_screens
 from bot.handlers.chats import router as chats_router
+from bot.handlers.mirror_admin import router as mirror_admin_router
 from bot.handlers.user import router as user_router
 from bot.store import now
 
@@ -41,7 +42,7 @@ class Harness:
         self.config = Config(bot_token="x", owner_ids=frozenset({OWNER}), data_dir=tmp, log_level="INFO")
 
     async def start(self) -> "Harness":
-        for router in (chats_router, admin_router, user_router):  # роутеры - модульные синглтоны
+        for router in (chats_router, mirror_admin_router, admin_router, user_router):  # роутеры - модульные синглтоны
             router._parent_router = None
         admin_screens.clear()
         self.app, self.dp, self.guard = await setup(self.config, self.bot)

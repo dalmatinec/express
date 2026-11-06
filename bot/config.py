@@ -21,6 +21,10 @@ class Config:
     owner_ids: frozenset[int]
     data_dir: Path
     log_level: str
+    secret_key: str | None = None   # шифрует токены зеркал и запасных ботов; без него эти функции выключены
+    web_host: str = "127.0.0.1"
+    web_port: int = 0               # 0 = веб-панель выключена
+    web_password: str = ""
 
     @property
     def db_path(self) -> Path:
@@ -49,4 +53,8 @@ def load_config() -> Config:
         owner_ids=owners,
         data_dir=Path(os.environ.get("DATA_DIR", "data")),
         log_level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+        secret_key=os.environ.get("SECRET_KEY", "").strip() or None,
+        web_host=os.environ.get("WEB_HOST", "127.0.0.1").strip() or "127.0.0.1",
+        web_port=int(os.environ.get("WEB_PORT", "0") or 0),
+        web_password=os.environ.get("WEB_PASSWORD", ""),
     )
