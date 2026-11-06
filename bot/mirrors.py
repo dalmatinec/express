@@ -36,7 +36,7 @@ from .store import now
 log = logging.getLogger(__name__)
 
 MIRROR_UPDATES = ["message", "callback_query"]
-DEFAULT_PER_USER = 3
+DEFAULT_PER_USER = 1
 DEFAULT_MAX_TOTAL = 200
 
 
@@ -218,7 +218,8 @@ class MirrorManager:
                 "SELECT COUNT(*) FROM mirrors WHERE owner_id = ? AND status = 'active' AND bot_id != ?",
                 (owner_id, bot_id))
             if limit > 0 and mine >= limit and owner_id not in app.config.owner_ids:
-                raise MirrorError(f"Можно не больше {limit} зеркал на человека.")
+                raise MirrorError("У вас уже есть зеркало, а можно одно на человека." if limit == 1
+                                  else f"Можно не больше {limit} зеркал на человека.")
             total = await app.db.fetchval("SELECT COUNT(*) FROM mirrors WHERE status = 'active'")
             if total >= int(app.store.setting("mirrors_max", DEFAULT_MAX_TOTAL)):
                 raise MirrorError("Достигнут предел числа зеркал, попробуйте позже.")

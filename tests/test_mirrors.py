@@ -196,12 +196,13 @@ class Mirrors(MirrorBase):
         with self.assertRaises(MirrorError) as c:
             await app.mirrors.add(TOKEN(2001), OTHER)
         self.assertIn("уже подключён", str(c.exception))
-        await app.mirrors.add(TOKEN(2003), USER)
-        await app.mirrors.add(TOKEN(2004), USER)
         with self.assertRaises(MirrorError) as c:
-            await app.mirrors.add(TOKEN(2005), USER)
-        self.assertIn("не больше 3", str(c.exception))
+            await app.mirrors.add(TOKEN(2003), USER)
+        self.assertIn("одно на человека", str(c.exception))
         await app.mirrors.add(TOKEN(2005), OTHER)  # у другого человека свой лимит
+        # зеркало владельца бота лимитом не ограничено
+        await app.mirrors.add(TOKEN(2006), OWNER)
+        await app.mirrors.add(TOKEN(2007), OWNER)
 
     async def test_mirror_off_without_secret_key_and_hidden_button(self):
         self.app.cipher = None
