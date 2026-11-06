@@ -312,3 +312,23 @@ async def suggest_names(app: App, first_name: str | None) -> tuple[str, str]:
         except TelegramAPIError:
             break  # не найден: свободен (или проверить не вышло, тогда BotFather подскажет)
     return display, candidate
+
+
+async def can_create_auto(app: App) -> bool:
+    """Включён ли у основного бота Bot Management Mode (в @BotFather): только тогда он может создавать зеркала сам."""
+    import time as _t
+    cached = getattr(app, "_managed_cache", None)
+    if cached and _t.time() - cached[0] < 600 and cached[2] == app.main_bot.id:
+        return cached[1]
+    try:
+        me = await app.main_bot.get_me()
+        ok = bool(getattr(me, "can_manage_bots", False))
+    except TelegramAPIError:
+        return bool(cached and cached[1])
+    app._managed_cache = (_t.time(), ok, app.main_bot.id)  # type: ignore[attr-defined]
+    return ok
+
+
+def auto_create_link(app: App, username: str, name: str) -> str:
+    from urllib.parse import quote
+    return f"https://t.me/newbot/{app.bot_username}/{username}?name={quote(name)}"

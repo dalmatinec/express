@@ -126,6 +126,9 @@ class ReserveStore:
             except TelegramAPIError:
                 continue  # Telegram недоступен: не тревожим зря
             rights = await self.check_rights(bot)
+            from .mirrors import can_create_auto
+            if not getattr(me, "can_manage_bots", False) and await can_create_auto(self.app):
+                rights.append("не включён Bot Management Mode: после переключения «Создать автоматически» не заработает")
             if rights:
                 problems[bot_id] = rights
         self.problems = problems

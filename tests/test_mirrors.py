@@ -598,3 +598,49 @@ class Names(unittest.TestCase):
         self.assertEqual(latin_slug("Юлия Щ"), "yuliyasch")
         self.assertEqual(latin_slug("😀"), "user")
         self.assertEqual(latin_slug("A b-C"), "abc")
+
+
+class AutoCreate(MirrorBase):
+    async def test_auto_button_only_when_management_mode_on(self):
+        h = self.h
+        await h.send(USER, "/start")
+        await h.click(USER, "mir")
+        urls = [b.url for row in h.user_screen(USER).markup.inline_keyboard for b in row if b.url]
+        self.assertEqual(urls, [], "режим не включён: только ручной способ")
+        self.assertNotIn("Автоматически", h.user_screen(USER).text)
+
+    async def test_auto_create_gives_link_and_connects_mirror(self):
+        h, app = self.h, self.app
+        self.tg.can_manage_bots = True
+        await h.send(USER, "/start")
+        await h.click(USER, "mir")
+        screen = h.user_screen(USER)
+        urls = [b.url for row in screen.markup.inline_keyboard for b in row if b.url]
+        self.assertEqual(len(urls), 1)
+        import re as _re
+        m = _re.match(r"https://t\.me/newbot/links1000_bot/(\w+_link_[a-z0-9]{4}_bot)\?name=U\d+%20LINK$", urls[0])
+        self.assertIsNotNone(m, urls[0])
+        self.assertIn("Токен не нужен", screen.text)
+
+        # человек подтвердил создание в Telegram: основному боту приходит managed_bot
+        await h.feed(managed_bot={"user": h.user(USER),
+                                  "bot_user": {"id": 2001, "is_bot": True, "first_name": "x", "username": m[1]}})
+        await h.wait_for(lambda: app.mirrors.is_running(2001))
+        row = await app.db.fetchone("SELECT owner_id FROM mirrors WHERE bot_id = 2001")
+        self.assertEqual(row["owner_id"], USER)
+        self.assertIn("создано и работает", self.tg.last(USER).text)
+
+        # повтор того же события ничего не ломает
+        n = len(self.tg.chat(USER))
+        await h.feed(managed_bot={"user": h.user(USER),
+                                  "bot_user": {"id": 2001, "is_bot": True, "first_name": "x", "username": m[1]}})
+        self.assertEqual(len(self.tg.chat(USER)), n)
+
+    async def test_auto_create_respects_one_per_person(self):
+        h, app = self.h, self.app
+        self.tg.can_manage_bots = True
+        await app.mirrors.add(TOKEN(2001), owner_id=USER, replacing=False)
+        await h.feed(managed_bot={"user": h.user(USER),
+                                  "bot_user": {"id": 2002, "is_bot": True, "first_name": "x", "username": "b_bot"}})
+        await h.wait_for(lambda: app.mirrors.is_running(2002))
+        self.assertFalse(app.mirrors.is_running(2001), "у человека одно зеркало: новое заменило прежнее")

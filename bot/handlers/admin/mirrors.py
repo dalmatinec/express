@@ -30,6 +30,8 @@ async def view_mirrors(ctx: Ctx) -> ViewResult:
     reserves = await app.reserves.listing()
     ready = sum(1 for r in reserves if r.status == "ready")
     public = bool(app.store.setting("mirrors_public", 1))
+    from ...mirrors import can_create_auto
+    auto = await can_create_auto(app)
     runner = app.runner
     state = "🔴 не работает, запасных нет" if runner and runner.state.down else "🟢 работает"
     html = (
@@ -38,7 +40,10 @@ async def view_mirrors(ctx: Ctx) -> ViewResult:
         f"Зеркал: <b>{alive}</b> работает из {len(listing)}\n"
         f"Запасных готово: <b>{ready}</b> из {len(reserves)}"
         + ("  ⚠️ добавьте ещё" if ready < int(app.store.setting("reserves_min", 2)) else "") + "\n"
-        f"Создание зеркал людьми: <b>{yes_no(public)}</b>"
+        f"Создание зеркал людьми: <b>{yes_no(public)}</b>\n"
+        + ("⚡️ Автосоздание зеркал: <b>включено</b>" if auto else
+           "⚡️ Автосоздание зеркал: <b>выключено</b>. Включите Bot Management Mode у основного и запасных "
+           "ботов в @BotFather, тогда у людей появится кнопка «Создать автоматически».")
     )
     rows: Rows = [
         [b("🪞 Зеркала", "a:mirl"), b("🛡 Запасные", "a:resl")],

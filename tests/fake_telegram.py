@@ -10,7 +10,7 @@ from aiogram.exceptions import TelegramBadRequest, TelegramUnauthorizedError
 from aiogram.methods import (
     AnswerCallbackQuery, ApproveChatJoinRequest, CopyMessage, CreateChatInviteLink, DeclineChatJoinRequest, DeleteMessage,
     EditChatInviteLink,
-    EditMessageMedia, EditMessageText, ForwardMessage, GetChat, GetChatMember, GetFile, GetMe, GetUpdates, RevokeChatInviteLink,
+    EditMessageMedia, EditMessageText, ForwardMessage, GetChat, GetChatMember, GetFile, GetManagedBotToken, GetMe, GetUpdates, RevokeChatInviteLink,
     SendAnimation, SendDocument, SendMessage, SendPhoto, SendVideo, SetMyCommands, TelegramMethod,
 )
 from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
@@ -50,6 +50,7 @@ class FakeTelegram(BaseSession):
     approved: list[tuple[int, int]] = field(default_factory=list)
     declined: list[tuple[int, int]] = field(default_factory=list)
     taken_usernames: set[str] = field(default_factory=set)  # юзернеймы, которые «заняты» (get_chat их находит)
+    can_manage_bots: bool = False  # включён Bot Management Mode
     unauthorized: bool = False  # токен бота отозван или бот заблокирован: на любой запрос Unauthorized
 
     def __post_init__(self) -> None:
@@ -110,8 +111,11 @@ class FakeTelegram(BaseSession):
             if str(method.chat_id).lstrip("@") in self.taken_usernames:
                 return Chat(id=-1, type="private")
             raise TelegramBadRequest(method, "Bad Request: chat not found")
+        if isinstance(method, GetManagedBotToken):
+            return f"{method.user_id}:" + "A" * 35
         if isinstance(method, GetMe):
-            return User(id=self.bot_id, is_bot=True, first_name="Links", username=f"links{self.bot_id}_bot")
+            return User(id=self.bot_id, is_bot=True, first_name="Links", username=f"links{self.bot_id}_bot",
+                        can_manage_bots=self.can_manage_bots)
         if isinstance(method, (SetMyCommands, AnswerCallbackQuery)):
             return True
         if isinstance(method, DeleteMessage):

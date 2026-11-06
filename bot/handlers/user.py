@@ -143,25 +143,39 @@ async def any_message(message: Message, app: App) -> None:
 
 
 # ---------- зеркала ----------
-MIRROR_HELP = (
+MIRROR_INTRO = (
     "🪞 <b>Зеркало</b>\n\n"
     "Это ваш собственный бот с теми же кнопками и ссылками. Если основной бот заблокируют, "
     "зеркало продолжит работать, а мы сообщим вам новый адрес.\n\n"
+)
+MIRROR_AUTO = (
+    "⚡️ <b>Автоматически</b> (проще всего)\n"
+    "Имя: <code>{name}</code>\n"
+    "Юзернейм: <code>{username}</code>\n"
+    "Нажмите «Создать автоматически», подтвердите в Telegram, и зеркало заработает само. Токен не нужен.\n\n"
+    "✋ <b>Или вручную</b>\n"
+)
+MIRROR_MANUAL = (
     "1. Откройте @BotFather → /newbot.\n"
-    "2. Когда спросит имя и юзернейм, вставьте готовые (нажмите, чтобы скопировать):\n"
+    "2. Имя и юзернейм вставьте готовые (нажмите, чтобы скопировать):\n"
     "   имя: <code>{name}</code>\n"
     "   юзернейм: <code>{username}</code>\n"
-    "   Если юзернейм занят, нажмите «Другой вариант».\n"
-    "3. Пришлите сюда токен, который выдаст BotFather. Сообщение с токеном я сразу удалю."
+    "3. Пришлите сюда токен от BotFather. Сообщение с токеном я сразу удалю."
 )
 
 
 async def mirror_help(app: App, first_name: str | None) -> tuple[str, object]:
-    from ..mirrors import suggest_names
+    from ..mirrors import auto_create_link, can_create_auto, suggest_names
     name, username = await suggest_names(app, first_name)
-    kb = markup([[InlineKeyboardButton(text="🎲 Другой вариант", callback_data="mirn")],
-                 [InlineKeyboardButton(text="‹ Назад", callback_data="m")]])
-    return MIRROR_HELP.format(name=escape(name), username=username), kb
+    auto = await can_create_auto(app)
+    html = MIRROR_INTRO + (MIRROR_AUTO.format(name=escape(name), username=username) if auto else "") \
+        + MIRROR_MANUAL.format(name=escape(name), username=username)
+    rows = []
+    if auto:
+        rows.append([InlineKeyboardButton(text="⚡️ Создать автоматически", url=auto_create_link(app, username, name))])
+    rows += [[InlineKeyboardButton(text="🎲 Другой вариант", callback_data="mirn")],
+             [InlineKeyboardButton(text="‹ Назад", callback_data="m")]]
+    return html, markup(rows)
 
 
 async def my_mirror_view(app: App, user_id: int) -> tuple[str, object]:
