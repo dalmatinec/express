@@ -548,3 +548,15 @@ class TelegramAdminMirrors(MirrorBase):
         self.assertIn("@links3001_bot", scr.text)
         scr = await h.admin("x:mirpub")
         self.assertIn("Создание зеркал людьми: <b>", scr.text)
+
+
+class TelegramReserveAdd(MirrorBase):
+    async def test_reserve_added_from_admin_chat_and_token_deleted(self):
+        h, app = self.h, self.app
+        await h.admin("a:resl")
+        await h.admin("x:resadd")
+        mid = await h.send(OWNER, TOKEN(3001))
+        self.assertNotIn((OWNER, mid), self.tg.messages, "сообщение с токеном удалено")
+        self.assertEqual([r.bot_id for r in await app.reserves.listing()], [3001])
+        row = await app.db.fetchone("SELECT token_enc FROM reserve_tokens WHERE bot_id = 3001")
+        self.assertNotIn(b"AAAAAAAA", bytes(row["token_enc"]))

@@ -2,8 +2,11 @@
 добавлять запасных безопаснее в веб-панели."""
 from html import escape
 
-from ...store import now
-from .core import Ctx, Rows, ViewResult, action, b, back_btn, view, yes_no
+from aiogram.types import Message
+
+from ...mirrors import MirrorError
+from ...ui import safe_delete
+from .core import Ctx, InputError, Rows, ViewResult, action, b, back_btn, on_input, view, yes_no
 
 STATUS = {"ready": "🟢 готов", "active": "⭐️ работает", "dead": "🔴 не рабочий"}
 
@@ -99,9 +102,30 @@ async def view_reserve_list(ctx: Ctx) -> ViewResult:
         extra = f"\n   ⚠️ {escape('; '.join(issues[:2]))}" if issues else ""
         lines.append(f"{r.position}. @{escape(r.username)} · {STATUS.get(r.status, r.status)}{extra}")
     html = ("🛡 <b>Запасные токены</b>\n\n" + ("\n".join(lines) or "Пока нет.") +
-            "\n\nДобавлять запасных нужно в веб-панели: токен нельзя присылать в чат. "
-            "Бот заранее сделайте админом во всех каналах с правом «Приглашать пользователей».")
-    return html, [[b("🩺 Проверить", "x:reschk")], back_btn("a:mir")]
+            "\n\nНовый запасной должен быть админом во всех каналах с правом «Приглашать пользователей».")
+    return html, [[b("➕ Добавить запасной", "x:resadd", "success")], [b("🩺 Проверить", "x:reschk")],
+                  back_btn("a:mir")]
+
+
+@action("resadd", "mirrors")
+async def act_reserve_add(ctx: Ctx):
+    return await ctx.ask("resadd", "Пришлите токен запасного бота (из @BotFather). Сообщение с токеном я сразу удалю.",
+                         "a:resl")
+
+
+@on_input("resadd", "mirrors")
+async def in_reserve_add(ctx: Ctx, message: Message):
+    token = (message.text or "").strip()
+    await safe_delete(ctx.app, ctx.chat_id, message.message_id)  # токен в чате не остаётся
+    try:
+        reserve, problems = await ctx.app.reserves.add(token)
+    except MirrorError as e:
+        raise InputError(str(e))
+    await ctx.log("mirror.reserve_add", reserve.username)
+    ctx.notice = f"✅ Запасной @{reserve.username} добавлен."
+    if problems:
+        ctx.notice += "\n⚠️ Сделайте его админом с правом «Приглашать пользователей»: " + "; ".join(problems[:4])
+    return "a:resl"
 
 
 @action("reschk", "mirrors")
