@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from html import escape
@@ -67,7 +68,9 @@ def token_bot_id(token: str) -> int:
 
 
 def make_session() -> AiohttpSession:
-    return AiohttpSession(limit=256)
+    """Общее HTTP-соединение. PROXY_URL (например socks5://127.0.0.1:1080) — если Telegram недоступен напрямую."""
+    proxy = os.environ.get("PROXY_URL", "").strip() or None
+    return AiohttpSession(limit=256, proxy=proxy)
 
 
 class BotFactory:

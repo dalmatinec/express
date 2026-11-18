@@ -4,3 +4,5 @@ aiosqlite==0.22.1
 uvloop>=0.19; sys_platform != "win32"
 # шифрование токенов зеркал и запасных ботов
 cryptography>=42
+# нужен только если задан PROXY_URL (socks5://...)
+aiohttp-socks>=0.9
