@@ -15,11 +15,11 @@ read -rp "Новый Telegram ID (только цифры): " NEW
 mapfile -t FILES < <(find "${DIRS[@]}" -maxdepth 3 -name .env \
     -not -path '*/node_modules/*' -not -path '*/.venv/*' -not -path '*/venv/*' 2>/dev/null | sort)
 HITS=()
-for f in "${FILES[@]}"; do grep -qE "$KEY" "$f" && HITS+=("$f"); done
+for f in "${FILES[@]}"; do grep -E "$KEY" "$f" | grep -qv GROUP && HITS+=("$f"); done
 [ "${#HITS[@]}" -gt 0 ] || { echo "Не нашёл ни одного .env со строками OWNER*/ADMIN*."; exit 0; }
 
 echo "Найдено ботов: ${#HITS[@]}. Сейчас там:"
-for f in "${HITS[@]}"; do echo "== $f"; grep -E "$KEY" "$f" | sed 's/^/   /'; done
+for f in "${HITS[@]}"; do echo "== $f"; grep -E "$KEY" "$f" | grep -v GROUP | sed 's/^/   /'; done
 echo
 [ "$MODE" = add ] && echo "Режим: ДОБАВИТЬ $NEW к существующим." || echo "Режим: ЗАМЕНИТЬ на $NEW."
 read -rp "Применить ко всем? (y/N) " OK
@@ -38,9 +38,9 @@ for f in "${HITS[@]}"; do
     cp -p "$f" "$f.bak-$(date +%Y%m%d_%H%M%S)"
     if [ "$MODE" = add ]; then
         # дописываем через запятую, если такого ID там ещё нет
-        sed -i -E "/$KEY/ { /(=|,)$NEW(,|$)/! s/=(.+)$/=\\1,$NEW/; /=$/ s/=$/=$NEW/ }" "$f"
+        sed -i -E "/GROUP/! { /$KEY/ { /(=|,)$NEW(,|$)/! s/=(.+)$/=\\1,$NEW/; /=$/ s/=$/=$NEW/ } }" "$f"
     else
-        sed -i -E "s/($KEY).*/\\1$NEW/" "$f"
+        sed -i -E "/GROUP/! s/($KEY).*/\\1$NEW/" "$f"   # ADMIN_GROUP_ID (id чата) не трогаем
     fi
     svc=$(service_of "$dir")
     if [ -n "$svc" ]; then
