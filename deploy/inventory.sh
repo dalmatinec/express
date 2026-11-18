@@ -25,6 +25,7 @@ check() {  # статус токена по ответу Telegram
 }
 
 declare -A seen
+DEAD=()
 echo "Сервер: $(hostname)"
 echo "-----------------------------------------------------------------"
 while IFS=: read -r file id rest; do
@@ -33,8 +34,11 @@ while IFS=: read -r file id rest; do
     seen[$token]=1
     dir=$(dirname "$file")
     while [ "$dir" != "/" ] && [ ! -f "$dir/.env" ] && [ ! -d "$dir/bot" ]; do dir=$(dirname "$dir"); done
+    [ "$dir" = "/" ] && dir=$(dirname "$file")  # токен лежит в config.py без .env: папка = где файл
     svc=$(service_of "$dir")
-    printf '%s\n   папка: %s | файл: %s | сервис: %s | бот №%s\n' "$(check "$token")" "$dir" "$file" "${svc:--}" "$id"
+    st="$(check "$token")"
+    printf '%s\n   папка: %s | файл: %s | сервис: %s | бот №%s\n' "$st" "$dir" "$file" "${svc:--}" "$id"
+    case "$st" in МЁРТВЫЙ*) DEAD+=("$dir");; esac
 done < <(grep -rIEo "${EXCL[@]}" --include=.env --include='*.env' --include=*.py --include=*.json --include=*.ini \
             --include=*.yaml --include=*.yml --include=*.cfg --include=*.toml --include=*.txt \
             "$RE" "${DIRS[@]}" 2>/dev/null | sort -u)
@@ -49,4 +53,12 @@ if command -v docker >/dev/null 2>&1; then
     done
 fi
 echo "-----------------------------------------------------------------"
-echo "Заменить токен: bash settoken.sh /путь/к/папке"
+if [ "${1:-}" = "--fix" ] && [ "${#DEAD[@]}" -gt 0 ]; then
+    echo "Мёртвых ботов: ${#DEAD[@]}. Для каждого введите НОВЫЙ токен или просто Enter, чтобы пропустить."
+    for d in $(printf '%s\n' "${DEAD[@]}" | sort -u); do
+        echo; echo "=== $d"
+        bash "$(dirname "$0")/settoken.sh" "$d" </dev/tty || true
+    done
+else
+    echo "Мёртвых: ${#DEAD[@]}. Заменить токены по очереди: bash $0 --fix"
+fi
