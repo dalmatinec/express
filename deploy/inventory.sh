@@ -7,11 +7,14 @@ read -ra DIRS <<< "${SCAN_DIRS:-/opt /root /home /srv /var/www}"
 UNITS="${UNIT_DIR:-/etc/systemd/system}"
 EXCL=(--exclude-dir=.venv --exclude-dir=venv --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=site-packages --exclude-dir=backups --exclude-dir=__pycache__)
 
-service_of() {  # какой systemd-сервис работает из этой папки
-    local dir="$1" f
+service_of() {  # сервис бота из этой папки (разовые oneshot-проверки пропускаем)
+    local dir="$1" f first=""
     for f in "$UNITS"/*.service; do
         [ -f "$f" ] || continue
-        if grep -qE "^(WorkingDirectory|ExecStart)=.*$dir(/|\s|$)" "$f"; then basename "$f" .service; return; fi
+        if grep -qE "^(WorkingDirectory|ExecStart)=.*$dir(/|\s|$)" "$f"; then
+            grep -qE '^Type=oneshot' "$f" && continue
+            basename "$f" .service; return
+        fi
     done
 }
 

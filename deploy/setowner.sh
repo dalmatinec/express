@@ -25,11 +25,14 @@ echo
 read -rp "Применить ко всем? (y/N) " OK
 [ "$OK" = "y" ] || { echo "Отменено."; exit 0; }
 
-service_of() {
-    local dir="$1" f
+service_of() {  # сервис бота из этой папки (разовые oneshot-проверки пропускаем)
+    local dir="$1" f first=""
     for f in "$UNITS"/*.service; do
         [ -f "$f" ] || continue
-        if grep -qE "^(WorkingDirectory|ExecStart)=.*$dir(/|\s|$)" "$f"; then basename "$f" .service; return; fi
+        if grep -qE "^(WorkingDirectory|ExecStart)=.*$dir(/|\s|$)" "$f"; then
+            grep -qE '^Type=oneshot' "$f" && continue
+            basename "$f" .service; return
+        fi
     done
 }
 

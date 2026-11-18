@@ -3,11 +3,14 @@
 # Берёт значение из самой ранней копии .env.bak-* рядом с файлом и перезапускает бота.
 set -uo pipefail
 UNITS=/etc/systemd/system
-service_of() {
-    local dir="$1" f
+service_of() {  # сервис бота из этой папки (разовые oneshot-проверки пропускаем)
+    local dir="$1" f first=""
     for f in "$UNITS"/*.service; do
         [ -f "$f" ] || continue
-        if grep -qE "^(WorkingDirectory|ExecStart)=.*$dir(/|\s|$)" "$f"; then basename "$f" .service; return; fi
+        if grep -qE "^(WorkingDirectory|ExecStart)=.*$dir(/|\s|$)" "$f"; then
+            grep -qE '^Type=oneshot' "$f" && continue
+            basename "$f" .service; return
+        fi
     done
 }
 for f in $(find /opt /root /home /srv -maxdepth 3 -name .env -not -path '*/node_modules/*' 2>/dev/null | sort); do
