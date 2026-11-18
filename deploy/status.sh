@@ -30,6 +30,15 @@ service_of() {
     done
 }
 
+alive_elsewhere() {  # бот запущен не через этот сервис: docker compose из папки или процесс из неё
+    local dir="$1"
+    if command -v docker >/dev/null 2>&1 && [ -n "$(docker ps -q --filter "label=com.docker.compose.project.working_dir=$dir" 2>/dev/null)" ]; then
+        echo docker; return 0
+    fi
+    pgrep -f "$dir/" >/dev/null 2>&1 && { echo process; return 0; }
+    return 1
+}
+
 declare -A seen
 ok=0; warn=0; bad=0; total=0
 echo
@@ -62,11 +71,17 @@ while IFS=: read -r file id rest; do
         if [ -n "$svc" ]; then
             if [ "$(systemctl is-active "$svc" 2>/dev/null)" = "active" ]; then
                 emit "$name" "$user" "работает" "$G" ""; ok=$((ok+1))
+            elif how=$(alive_elsewhere "$dir"); then
+                emit "$name" "$user" "работает ($how)" "$G" "сервис $svc не активен, но бот запущен другим способом"; ok=$((ok+1))
             else
                 emit "$name" "$user" "ОСТАНОВЛЕН" "$Y" "токен живой, сервис $svc не запущен: systemctl restart $svc"; warn=$((warn+1))
             fi
-        elif pgrep -f "$dir" >/dev/null 2>&1; then
-            emit "$name" "$user" "работает (без сервиса)" "$Y" "после перезагрузки не поднимется, нужен автозапуск"; warn=$((warn+1))
+        elif how=$(alive_elsewhere "$dir"); then
+            if [ "$how" = docker ]; then
+                emit "$name" "$user" "работает (docker)" "$G" ""; ok=$((ok+1))
+            else
+                emit "$name" "$user" "работает (без сервиса)" "$Y" "после перезагрузки не поднимется, нужен автозапуск"; warn=$((warn+1))
+            fi
         else
             emit "$name" "$user" "НЕ ЗАПУЩЕН" "$Y" "токен живой, но процесса нет и сервиса тоже"; warn=$((warn+1))
         fi
