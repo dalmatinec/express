@@ -73,6 +73,34 @@ def service_of(d: Path) -> str:
     return "-"
 
 
+def about(d: Path) -> list[str]:
+    """Что это за бот: репозиторий, описание сервиса, заголовок README, упоминания @имя_bot."""
+    import subprocess
+    out = []
+    try:
+        url = subprocess.run(["git", "-C", str(d), "remote", "get-url", "origin"], capture_output=True, text=True,
+                             timeout=5).stdout.strip()
+        if url:
+            out.append(f"репозиторий: {url}")
+    except Exception:
+        pass
+    svc = service_of(d)
+    if svc != "-":
+        m = re.search(r"^Description=(.*)$", read(UNITS / f"{svc}.service"), re.M)
+        if m:
+            out.append(f"описание сервиса: {m.group(1).strip()[:90]}")
+    for line in read(d / "README.md").splitlines():
+        if line.strip():
+            out.append(f"README: {line.strip().lstrip('# ')[:90]}")
+            break
+    names = set()
+    for f, _ in [(d / n, 0) for n in (".env", "config.py", "README.md", ".env.example")]:
+        names |= set(re.findall(r"@[A-Za-z0-9_]{4,}[bB]ot\b", read(f)))
+    if names:
+        out.append("упоминания: " + ", ".join(sorted(names)[:6]))
+    return out
+
+
 def owners(d: Path) -> list[str]:
     out = []
     for name in (".env", "config.py"):
@@ -133,6 +161,8 @@ def main() -> None:
         status = token_status(tokens[0]) if tokens else "токен не найден"
         print("=" * 70)
         print(f"{d}   сервис: {service_of(d)}   токен: {status}" + (f"   бот №{tokens[0].split(':')[0]}" if tokens else ""))
+        for line in about(d):
+            print(f"   {line}")
         for line in owners(d) or ["владелец: не найден в .env/config.py"]:
             print(f"   {line}")
         dbs = databases(d)
